@@ -514,8 +514,9 @@ func (r *MutationResolver) RenameGroup(args *struct {
 func (r *MutationResolver) GroupAddSubscriptions(args *struct {
 	ID              graphql.ID
 	SubscriptionIDs []graphql.ID
+	NameFilterRegex *string
 }) (int32, error) {
-	return group.AddSubscriptions(context.TODO(), args.ID, args.SubscriptionIDs)
+	return group.AddSubscriptions(context.TODO(), args.ID, args.SubscriptionIDs, args.NameFilterRegex)
 }
 
 func (r *MutationResolver) GroupDelSubscriptions(args *struct {
