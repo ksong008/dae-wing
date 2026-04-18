@@ -117,4 +117,6 @@ require (
 
 replace github.com/daeuniverse/dae => ./dae-core
 
+replace github.com/daeuniverse/outbound => github.com/olicesx/outbound v0.0.0-20260417011710-d2c9ae825671
+
 // replace github.com/daeuniverse/dae => ../dae
