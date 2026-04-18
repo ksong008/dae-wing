@@ -206,11 +206,28 @@ Tests added:
 - runtime overview resolver caches sample resolvers
 - empty runtime overview returns no sample resolvers
 
+### D. Reload path DNS cache retention cleanup
+
+Files:
+
+- `dae/run.go`
+
+Changes:
+
+- Stopped cloning `dae-core` DNS cache during reload in `dae-wing`.
+- The current `dae-core` reload path no longer restores that cloned cache back into the new controller/domain-routing state, so retaining it in `dae-wing` provided allocation cost without actual reuse.
+
+Why this helps:
+
+- avoids a deep copy of a potentially large DNS cache map on every reload
+- reduces reload-time allocation spikes
+- avoids carrying dead reload state that is not actually consumed by the new control plane
+
 ## Next Step
 
 Recommended immediate next step:
 
-- audit reload/control-plane glue in `dae/run.go`
+- continue auditing reload/control-plane glue in `dae/run.go`
 
 Questions to answer:
 
