@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/daeuniverse/dae/common/netutils"
 	daeConfig "github.com/daeuniverse/dae/config"
@@ -31,8 +32,8 @@ type ReloadMessage struct {
 var ChReloadConfigs = make(chan *ReloadMessage)
 var GracefullyExit = make(chan struct{})
 var EmptyConfig *daeConfig.Config
-var c *control.ControlPlane
 var onceWaitingNetwork sync.Once
+var controlPlaneRef atomic.Pointer[control.ControlPlane]
 
 func init() {
 	sections, err := config_parser.Parse(`global{} routing{}`)
@@ -46,16 +47,21 @@ func init() {
 }
 
 func ControlPlane() (*control.ControlPlane, error) {
-	if c == nil {
-		return nil, ErrControlPlaneNotInit
+	if c := controlPlaneRef.Load(); c != nil {
+		return c, nil
 	}
-	return c, nil
+	return nil, ErrControlPlaneNotInit
+}
+
+func storeControlPlane(c *control.ControlPlane) {
+	controlPlaneRef.Store(c)
 }
 
 func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string, disableTimestamp bool, dry bool) (err error) {
 	defer close(GracefullyExit)
 	// Not really run dae.
 	if dry {
+		storeControlPlane(nil)
 		log.Infoln("Dry run in api-only mode")
 	dryLoop:
 		for newConf := range ChReloadConfigs {
@@ -70,10 +76,12 @@ func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string,
 	}
 
 	// New c.
-	c, err = newControlPlane(log, nil, nil, conf, externGeoDataDirs)
+	c, err := newControlPlane(log, nil, nil, conf, externGeoDataDirs)
 	if err != nil {
 		return err
 	}
+	storeControlPlane(c)
+	defer storeControlPlane(nil)
 
 	// Serve tproxy TCP/UDP server util signals.
 	var listener *control.Listener
@@ -188,6 +196,7 @@ loop:
 			// Prepare new context.
 			oldC := c
 			c = newC
+			storeControlPlane(c)
 			conf = newConf
 			reloading = true
 			/* dae-wing start */
@@ -198,6 +207,7 @@ loop:
 			oldC.Close()
 		}
 	}
+	storeControlPlane(nil)
 	if e := c.Close(); e != nil {
 		return fmt.Errorf("close control plane: %w", e)
 	}

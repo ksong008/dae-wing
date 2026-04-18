@@ -223,11 +223,35 @@ Why this helps:
 - reduces reload-time allocation spikes
 - avoids carrying dead reload state that is not actually consumed by the new control plane
 
+### E. Control-plane pointer synchronization
+
+Files:
+
+- `dae/run.go`
+- `dae/run_test.go`
+
+Changes:
+
+- Replaced the unsynchronized package-global control-plane pointer access with an atomic pointer wrapper.
+- `dae-wing` now stores the freshly swapped control plane atomically during reload.
+- Shutdown now clears the exported control-plane pointer before closing the active control plane so new queries do not grab a closing instance.
+
+Why this helps:
+
+- removes a real concurrency race between GraphQL request handlers and reload-time control-plane swaps
+- makes runtime queries more stable during reload/shutdown boundaries
+- reduces the chance of handing out a stale or closing control-plane pointer to request paths
+
+Tests added:
+
+- control-plane accessor returns `ErrControlPlaneNotInit` when empty
+- control-plane accessor returns the atomically stored pointer when present
+
 ## Next Step
 
 Recommended immediate next step:
 
-- continue auditing reload/control-plane glue in `dae/run.go`
+- tighten logger reconfiguration in `dae/run.go`
 
 Questions to answer:
 
