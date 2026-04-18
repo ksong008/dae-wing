@@ -52,7 +52,19 @@ jobs:
         env:
           GOFLAGS: -mod=mod -modcacherw
         run: |
-          go test -count=1 ./...
+          packages=$(go list ./...)
+          failed=""
+          for pkg in $packages; do
+            echo "::group::go test $pkg"
+            if ! go test -count=1 "$pkg"; then
+              failed="$failed $pkg"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "Failed packages:$failed"
+            exit 1
+          fi
 
   build:
     name: Build
