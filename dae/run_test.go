@@ -6,10 +6,12 @@
 package dae
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
 	"github.com/daeuniverse/dae/control"
+	"github.com/sirupsen/logrus"
 )
 
 func TestControlPlaneAccessorUsesAtomicStore(t *testing.T) {
@@ -31,5 +33,20 @@ func TestControlPlaneAccessorUsesAtomicStore(t *testing.T) {
 	}
 	if got != expected {
 		t.Fatal("expected accessor to return stored control plane")
+	}
+}
+
+func TestReconfigureLoggersPreservesOutput(t *testing.T) {
+	var buf bytes.Buffer
+	log := logrus.New()
+	log.SetOutput(&buf)
+
+	reconfigureLoggers(log, "debug", true)
+
+	if log.Out != &buf {
+		t.Fatal("expected logger output to be preserved")
+	}
+	if log.Level != logrus.DebugLevel {
+		t.Fatalf("expected debug level, got %v", log.Level)
 	}
 }

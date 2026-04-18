@@ -57,6 +57,14 @@ func storeControlPlane(c *control.ControlPlane) {
 	controlPlaneRef.Store(c)
 }
 
+func reconfigureLoggers(log *logrus.Logger, logLevel string, disableTimestamp bool) {
+	logger.SetLogger(log, logLevel, disableTimestamp, nil)
+	std := logrus.StandardLogger()
+	if log != std {
+		logger.SetLogger(std, logLevel, disableTimestamp, nil)
+	}
+}
+
 func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string, disableTimestamp bool, dry bool) (err error) {
 	defer close(GracefullyExit)
 	// Not really run dae.
@@ -146,13 +154,9 @@ loop:
 			/* dae-wing start */
 			newConf := newReloadMsg.Config
 			/* dae-wing end */
-			// New logger.
-			oldLogOutput := log.Out
-			log = logrus.New()
-			logger.SetLogger(log, newConf.Global.LogLevel, disableTimestamp, nil)
-			logger.SetLogger(logrus.StandardLogger(), newConf.Global.LogLevel, disableTimestamp, nil)
-			log.SetOutput(oldLogOutput) // FIXME: THIS IS A HACK.
-			logrus.SetOutput(oldLogOutput)
+			// Reconfigure logger in place to preserve writer/locks and avoid
+			// swapping the logger object out from under concurrent users.
+			reconfigureLoggers(log, newConf.Global.LogLevel, disableTimestamp)
 
 			// New control plane.
 			obj := c.EjectBpf()
