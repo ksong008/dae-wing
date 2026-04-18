@@ -20,6 +20,7 @@ import (
 )
 
 const latencyProbeConcurrency = 8
+const manualLatencyProbeConcurrency = 16
 const latencyProbeTimeout = 5 * time.Second
 
 func TestLatencies(ctx context.Context, ids *[]graphql.ID) ([]*LatencyResolver, error) {
@@ -33,14 +34,24 @@ func TestLatencies(ctx context.Context, ids *[]graphql.ID) ([]*LatencyResolver, 
 		return nil, err
 	}
 
-	results := testLatencyResultsForNodes(ctx, option, nodes)
+	results := testLatencyResultsForNodes(ctx, option, nodes, manualLatencyProbeConcurrency, true)
 	storeLatencyResults(results)
 	return results, nil
 }
 
-func testLatencyResultsForNodes(ctx context.Context, option *dialer.GlobalOption, nodes []db.Node) []*LatencyResolver {
+func testLatencyResultsForNodes(
+	ctx context.Context,
+	option *dialer.GlobalOption,
+	nodes []db.Node,
+	concurrency int,
+	fast bool,
+) []*LatencyResolver {
+	if concurrency <= 0 {
+		concurrency = latencyProbeConcurrency
+	}
+
 	results := make([]*LatencyResolver, len(nodes))
-	sem := make(chan struct{}, latencyProbeConcurrency)
+	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
 	for index := range nodes {
@@ -52,7 +63,7 @@ func testLatencyResultsForNodes(ctx context.Context, option *dialer.GlobalOption
 			defer func() { <-sem }()
 
 			node := nodes[index]
-			results[index] = testSingleNodeLatency(ctx, option, &node)
+			results[index] = testSingleNodeLatency(ctx, option, &node, fast)
 		}()
 	}
 
@@ -94,7 +105,7 @@ func latencyProbeNodes(ctx context.Context, ids *[]graphql.ID) ([]db.Node, error
 	return nodes, nil
 }
 
-func testSingleNodeLatency(ctx context.Context, option *dialer.GlobalOption, node *db.Node) *LatencyResolver {
+func testSingleNodeLatency(ctx context.Context, option *dialer.GlobalOption, node *db.Node, fast bool) *LatencyResolver {
 	resolver := &LatencyResolver{
 		NodeID:    node.ID,
 		AliveVal:  false,
@@ -112,7 +123,12 @@ func testSingleNodeLatency(ctx context.Context, option *dialer.GlobalOption, nod
 	}
 	defer d.Close()
 
-	result, err := d.ProbeLatency()
+	var result *dialer.LatencyProbeResult
+	if fast {
+		result, err = d.ProbeLatencyFast()
+	} else {
+		result, err = d.ProbeLatency()
+	}
 	if err != nil {
 		msg := err.Error()
 		resolver.MessageV = &msg
