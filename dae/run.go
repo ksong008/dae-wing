@@ -148,11 +148,11 @@ loop:
 
 			// New control plane.
 			obj := c.EjectBpf()
+			// Do not clone dns cache on reload.
+			// The current dae-core reload path no longer restores the cloned cache
+			// into the new controller/domain-routing state, so copying it here only
+			// adds reload-time allocations without preserving useful runtime state.
 			var dnsCache map[string]*control.DnsCache
-			if conf.Dns.IpVersionPrefer == newConf.Dns.IpVersionPrefer {
-				// Only keep dns cache when ip version preference not change.
-				dnsCache = c.CloneDnsCache()
-			}
 			log.Warnln("[Reload] Load new control plane")
 			newC, err := newControlPlane(log, obj, dnsCache, newConf, externGeoDataDirs)
 			if err != nil {
