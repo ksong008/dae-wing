@@ -50,3 +50,20 @@ func TestReconfigureLoggersPreservesOutput(t *testing.T) {
 		t.Fatalf("expected debug level, got %v", log.Level)
 	}
 }
+
+func TestNotifyReloadCallbackHandlesNilAndBufferedChannels(t *testing.T) {
+	notifyReloadCallback(nil, nil)
+
+	ch := make(chan error, 1)
+	expected := errors.New("reload failed")
+	notifyReloadCallback(ch, expected)
+
+	select {
+	case got := <-ch:
+		if !errors.Is(got, expected) {
+			t.Fatalf("expected %v, got %v", expected, got)
+		}
+	default:
+		t.Fatal("expected callback result to be delivered")
+	}
+}

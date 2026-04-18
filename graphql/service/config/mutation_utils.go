@@ -265,7 +265,7 @@ func Run(d *gorm.DB, noLoad bool) (n int32, err error) {
 	defer runLock.Unlock()
 	//// Dry run.
 	if noLoad {
-		ch := make(chan error)
+		ch := make(chan error, 1)
 		dae.ChReloadConfigs <- &dae.ReloadMessage{
 			Config:   dae.EmptyConfig,
 			Callback: ch,
@@ -454,7 +454,7 @@ func Run(d *gorm.DB, noLoad bool) (n int32, err error) {
 	}
 
 	/// Reload with current config.
-	chReloadCallback := make(chan error)
+	chReloadCallback := make(chan error, 1)
 	dae.ChReloadConfigs <- &dae.ReloadMessage{
 		Config:   c,
 		Callback: chReloadCallback,

@@ -65,6 +65,13 @@ func reconfigureLoggers(log *logrus.Logger, logLevel string, disableTimestamp bo
 	}
 }
 
+func notifyReloadCallback(callback chan<- error, err error) {
+	if callback == nil {
+		return
+	}
+	callback <- err
+}
+
 func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string, disableTimestamp bool, dry bool) (err error) {
 	defer close(GracefullyExit)
 	// Not really run dae.
@@ -77,7 +84,7 @@ func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string,
 			case nil:
 				break dryLoop
 			default:
-				newConf.Callback <- nil
+				notifyReloadCallback(newConf.Callback, nil)
 			}
 		}
 		return nil
@@ -141,7 +148,7 @@ loop:
 				<-readyChan
 				log.Warnln("[Reload] Finished")
 				/* dae-wing start */
-				chCallback <- errReload
+				notifyReloadCallback(chCallback, errReload)
 				/* dae-wing end */
 			} else {
 				// Listening error.
