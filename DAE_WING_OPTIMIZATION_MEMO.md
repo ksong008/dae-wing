@@ -270,11 +270,35 @@ Tests added:
 
 - logger reconfiguration preserves the existing output writer and applies the new level
 
+### G. Reload callback decoupling
+
+Files:
+
+- `dae/run.go`
+- `dae/run_test.go`
+- `graphql/service/config/mutation_utils.go`
+
+Changes:
+
+- Added a small reload-callback helper in `dae/run.go` so dry-run and reload completion paths treat nil callbacks safely.
+- Changed GraphQL-triggered reload callback channels to use a buffer of 1.
+- Reload completion no longer depends on the caller goroutine being scheduled at the exact moment the control plane becomes ready.
+
+Why this helps:
+
+- reduces coupling between reload completion and GraphQL request scheduling
+- avoids accidental blocking on nil or slow callback receivers
+- makes reload completion paths more robust under concurrent load
+
+Tests added:
+
+- reload callback helper handles nil callbacks and buffered callback delivery
+
 ## Next Step
 
 Recommended immediate next step:
 
-- continue auditing `dae/run.go` exit and callback paths
+- continue auditing `dae/run.go` exit and shutdown paths
 
 Questions to answer:
 
