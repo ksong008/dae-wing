@@ -149,6 +149,31 @@ Main risks:
 - Verified that `dae-wing` currently pins `dae-core` through local replace/submodule structure.
 - Verified that `daed personal/stable` can be updated to include the latest `dae personal/stable` by first bumping `dae-wing`, then bumping `daed`.
 
+### B. `node/latency_cache` tightening
+
+Files:
+
+- `graphql/service/node/latency_cache.go`
+- `graphql/service/node/latency_cache_test.go`
+
+Changes:
+
+- Cache refresh now replaces the whole latency cache state atomically instead of incrementally overwriting individual items.
+- This prevents stale node entries from accumulating indefinitely after topology changes.
+- Query path now snapshots only the requested node IDs instead of cloning the entire latency cache map on every request.
+- Runtime latency merge now reuses the already-fetched node list rather than re-querying all matching nodes from DB by link.
+
+Why this helps:
+
+- lower memory retention from obsolete cache entries
+- lower per-query allocation cost
+- fewer redundant DB operations on the read path
+
+Tests added:
+
+- full cache replacement removes stale entries
+- filtered cache snapshot only clones requested node IDs
+
 ## Current Conclusion
 
 Short version:

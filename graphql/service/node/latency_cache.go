@@ -43,24 +43,35 @@ func cloneLatencyResolver(resolver *LatencyResolver) *LatencyResolver {
 }
 
 func storeLatencyResults(results []*LatencyResolver) {
-	nodeLatencyCache.mu.Lock()
-	defer nodeLatencyCache.mu.Unlock()
-
-	nodeLatencyCache.updatedAt = time.Now()
+	replaced := make(map[uint]*LatencyResolver, len(results))
 	for _, result := range results {
 		if result == nil {
 			continue
 		}
-		nodeLatencyCache.items[result.NodeID] = cloneLatencyResolver(result)
+		replaced[result.NodeID] = cloneLatencyResolver(result)
 	}
+
+	nodeLatencyCache.mu.Lock()
+	defer nodeLatencyCache.mu.Unlock()
+
+	nodeLatencyCache.updatedAt = time.Now()
+	nodeLatencyCache.items = replaced
 }
 
-func snapshotCachedLatencyResults() map[uint]*LatencyResolver {
+func snapshotCachedLatencyResultsFor(nodeIDs []uint) map[uint]*LatencyResolver {
 	nodeLatencyCache.mu.RLock()
 	defer nodeLatencyCache.mu.RUnlock()
 
-	results := make(map[uint]*LatencyResolver, len(nodeLatencyCache.items))
-	for id, resolver := range nodeLatencyCache.items {
+	if len(nodeIDs) == 0 {
+		return map[uint]*LatencyResolver{}
+	}
+
+	results := make(map[uint]*LatencyResolver, len(nodeIDs))
+	for _, id := range nodeIDs {
+		resolver, ok := nodeLatencyCache.items[id]
+		if !ok {
+			continue
+		}
 		results[id] = cloneLatencyResolver(resolver)
 	}
 	return results
@@ -72,7 +83,7 @@ func lastLatencyCacheUpdatedAt() time.Time {
 	return nodeLatencyCache.updatedAt
 }
 
-func loadRuntimeLatencyResults(ctx context.Context) (map[uint]*LatencyResolver, error) {
+func loadRuntimeLatencyResults(ctx context.Context, nodes []db.Node) (map[uint]*LatencyResolver, error) {
 	ctl, err := dae.ControlPlane()
 	if err != nil {
 		if errors.Is(err, dae.ErrControlPlaneNotInit) {
@@ -96,11 +107,6 @@ func loadRuntimeLatencyResults(ctx context.Context) (map[uint]*LatencyResolver, 
 
 	if len(links) == 0 {
 		return map[uint]*LatencyResolver{}, nil
-	}
-
-	var nodes []db.Node
-	if err := db.DB(ctx).Where("link in ?", links).Find(&nodes).Error; err != nil {
-		return nil, err
 	}
 
 	nodesByLink := make(map[string][]db.Node, len(nodes))
@@ -131,6 +137,14 @@ func loadRuntimeLatencyResults(ctx context.Context) (map[uint]*LatencyResolver, 
 	}
 
 	return results, nil
+}
+
+func nodeIDs(nodes []db.Node) []uint {
+	ids := make([]uint, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
+	}
+	return ids
 }
 
 func selectedCheckInterval(ctx context.Context) (time.Duration, error) {
@@ -207,17 +221,17 @@ func stringPtr(value string) *string {
 }
 
 func QueryLatencies(ctx context.Context, ids *[]graphql.ID) ([]*LatencyResolver, error) {
-	if err := refreshLatencyCacheIfNeeded(ctx); err != nil {
-		return nil, err
-	}
-
 	nodes, err := latencyProbeNodes(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
 
-	merged := snapshotCachedLatencyResults()
-	runtimeResults, err := loadRuntimeLatencyResults(ctx)
+	if err := refreshLatencyCacheIfNeeded(ctx); err != nil {
+		return nil, err
+	}
+
+	merged := snapshotCachedLatencyResultsFor(nodeIDs(nodes))
+	runtimeResults, err := loadRuntimeLatencyResults(ctx, nodes)
 	if err != nil {
 		return nil, err
 	}
