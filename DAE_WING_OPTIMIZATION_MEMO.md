@@ -247,11 +247,34 @@ Tests added:
 - control-plane accessor returns `ErrControlPlaneNotInit` when empty
 - control-plane accessor returns the atomically stored pointer when present
 
+### F. Reload logger reconfiguration cleanup
+
+Files:
+
+- `dae/run.go`
+- `dae/run_test.go`
+
+Changes:
+
+- Removed the reload-time `logrus.New()` replacement and the paired output-reset hack.
+- Added an in-place logger reconfiguration helper that updates level/formatter while preserving the existing writer.
+- Standard logger reconfiguration is still kept in sync, but without swapping logger instances during reload.
+
+Why this helps:
+
+- avoids swapping logger objects while other goroutines may still hold references
+- preserves existing writer state without depending on a manual `SetOutput` reset
+- makes reload behavior simpler and less allocation-heavy
+
+Tests added:
+
+- logger reconfiguration preserves the existing output writer and applies the new level
+
 ## Next Step
 
 Recommended immediate next step:
 
-- tighten logger reconfiguration in `dae/run.go`
+- continue auditing `dae/run.go` exit and callback paths
 
 Questions to answer:
 
