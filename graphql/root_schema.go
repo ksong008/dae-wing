@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/graph-gophers/graphql-go"
 )
@@ -207,6 +208,16 @@ func (h *hasRoleDirective) Validate(ctx context.Context, _ interface{}) error {
 
 type resolver struct{}
 
+var (
+	schemaStringOnce sync.Once
+	schemaStringVal  string
+	schemaStringErr  error
+
+	parsedSchemaOnce sync.Once
+	parsedSchemaVal  *graphql.Schema
+	parsedSchemaErr  error
+)
+
 func (*resolver) Query() *queryResolver {
 	return &queryResolver{}
 }
@@ -216,27 +227,35 @@ func (*resolver) Mutation() *MutationResolver {
 }
 
 func SchemaString() (string, error) {
-	var sb strings.Builder
-	sb.WriteString(rootSchema)
-	for _, c := range schemaChains {
-		s, err := c()
-		if err != nil {
-			return "", err
+	schemaStringOnce.Do(func() {
+		var sb strings.Builder
+		sb.WriteString(rootSchema)
+		for _, c := range schemaChains {
+			s, err := c()
+			if err != nil {
+				schemaStringErr = err
+				return
+			}
+			sb.WriteString(s)
 		}
-		sb.WriteString(s)
-	}
-	return strings.TrimSpace(sb.String()), nil
+		schemaStringVal = strings.TrimSpace(sb.String())
+	})
+	return schemaStringVal, schemaStringErr
 }
 
 func Schema() (*graphql.Schema, error) {
-	schema, err := SchemaString()
-	if err != nil {
-		return nil, err
-	}
-	return graphql.MustParseSchema(
-		schema,
-		&resolver{},
-		graphql.UseFieldResolvers(),
-		graphql.Directives(&hasRoleDirective{}),
-	), nil
+	parsedSchemaOnce.Do(func() {
+		schema, err := SchemaString()
+		if err != nil {
+			parsedSchemaErr = err
+			return
+		}
+		parsedSchemaVal = graphql.MustParseSchema(
+			schema,
+			&resolver{},
+			graphql.UseFieldResolvers(),
+			graphql.Directives(&hasRoleDirective{}),
+		)
+	})
+	return parsedSchemaVal, parsedSchemaErr
 }

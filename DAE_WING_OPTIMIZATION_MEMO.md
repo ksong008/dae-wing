@@ -294,11 +294,35 @@ Tests added:
 
 - reload callback helper handles nil callbacks and buffered callback delivery
 
+### H. GraphQL schema caching
+
+Files:
+
+- `graphql/root_schema.go`
+- `graphql/root_schema_test.go`
+
+Changes:
+
+- Cached the fully assembled GraphQL schema string behind `SchemaString()`.
+- Cached the parsed `*graphql.Schema` behind `Schema()`.
+- This removes repeated schema-text assembly on request paths that traverse `queryResolver.General()`.
+
+Why this helps:
+
+- avoids rebuilding the full schema string on repeated `general { ... }` queries
+- cuts repeated large temporary allocations from dashboard polling paths
+- keeps schema parsing as a one-time startup-style cost instead of a repeatable hot-path cost
+
+Tests added:
+
+- repeated `SchemaString()` calls return identical schema text
+- repeated `Schema()` calls reuse the same parsed schema pointer
+
 ## Next Step
 
 Recommended immediate next step:
 
-- continue auditing `dae/run.go` exit and shutdown paths
+- finish the dae-wing memory/lifecycle audit and stop changing code unless another clear hot path appears
 
 Questions to answer:
 
