@@ -181,14 +181,38 @@ Short version:
 - `dae-wing` is the next best optimization target after recent `dae-core` DNS/UDP stabilization.
 - `graphql/service/node/latency_cache.go` is the strongest candidate for meaningful improvement.
 
+### C. Runtime overview hot-path tightening
+
+Files:
+
+- `dae/runtime.go`
+- `graphql/service/general/runtime_resolver.go`
+- `graphql/service/general/runtime_resolver_test.go`
+
+Changes:
+
+- `dae-wing` now reuses `dae-core`'s runtime snapshot types directly instead of rebuilding the runtime overview sample slice one element at a time.
+- `RuntimeOverviewResolver` now builds sample resolvers once up front and keeps them attached to the overview resolver.
+- Sample resolvers now point at the existing runtime sample entries instead of copying each sample into resolver structs.
+
+Why this helps:
+
+- removes one full sample-slice copy per runtime overview query
+- reduces request-path allocations for polling-heavy dashboard traffic
+- keeps the GraphQL hot path thinner without changing external schema shape
+
+Tests added:
+
+- runtime overview resolver caches sample resolvers
+- empty runtime overview returns no sample resolvers
+
 ## Next Step
 
 Recommended immediate next step:
 
-- audit and tighten `graphql/service/node/latency_cache.go`
+- audit reload/control-plane glue in `dae/run.go`
 
 Questions to answer:
 
-- Does the cache retain obsolete node entries?
-- Can the cache be rebuilt atomically instead of patched incrementally?
-- Can runtime results and persisted results be merged with less copying?
+- Is reload retaining more state than necessary across control-plane swaps?
+- Can logger/channel glue be tightened without affecting reload correctness?

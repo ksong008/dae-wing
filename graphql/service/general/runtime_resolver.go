@@ -13,11 +13,25 @@ import (
 )
 
 type RuntimeOverviewResolver struct {
-	Overview *dae.RuntimeOverview
+	Overview        *dae.RuntimeOverview
+	sampleResolvers []*RuntimeTrafficSampleResolver
 }
 
 type RuntimeTrafficSampleResolver struct {
-	Sample dae.RuntimeTrafficSample
+	Sample *dae.RuntimeTrafficSample
+}
+
+func newRuntimeOverviewResolver(overview *dae.RuntimeOverview) *RuntimeOverviewResolver {
+	resolver := &RuntimeOverviewResolver{Overview: overview}
+	if overview == nil || len(overview.Samples) == 0 {
+		return resolver
+	}
+
+	resolver.sampleResolvers = make([]*RuntimeTrafficSampleResolver, len(overview.Samples))
+	for i := range overview.Samples {
+		resolver.sampleResolvers[i] = &RuntimeTrafficSampleResolver{Sample: &overview.Samples[i]}
+	}
+	return resolver
 }
 
 func (r *Resolver) RuntimeOverview(args *struct {
@@ -28,7 +42,7 @@ func (r *Resolver) RuntimeOverview(args *struct {
 	if err != nil {
 		return nil, err
 	}
-	return &RuntimeOverviewResolver{Overview: overview}, nil
+	return newRuntimeOverviewResolver(overview), nil
 }
 
 func (r *RuntimeOverviewResolver) UpdatedAt() graphql.Time {
@@ -60,11 +74,7 @@ func (r *RuntimeOverviewResolver) UdpSessions() int32 {
 }
 
 func (r *RuntimeOverviewResolver) Samples() []*RuntimeTrafficSampleResolver {
-	resolvers := make([]*RuntimeTrafficSampleResolver, 0, len(r.Overview.Samples))
-	for _, sample := range r.Overview.Samples {
-		resolvers = append(resolvers, &RuntimeTrafficSampleResolver{Sample: sample})
-	}
-	return resolvers
+	return r.sampleResolvers
 }
 
 func (r *RuntimeTrafficSampleResolver) Timestamp() graphql.Time {
