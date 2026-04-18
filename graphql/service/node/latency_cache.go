@@ -162,7 +162,7 @@ func refreshLatencyCache(ctx context.Context) error {
 		return err
 	}
 
-	results := testLatencyResultsForNodes(option, nodes)
+	results := testLatencyResultsForNodes(ctx, option, nodes)
 	storeLatencyResults(results)
 
 	if ctl, err := dae.ControlPlane(); err == nil {
