@@ -48,6 +48,12 @@ jobs:
             go.mod
             go.sum
 
+      - name: Prepare dae-core build artifacts
+        env:
+          GOFLAGS: -mod=mod -modcacherw
+        run: |
+          make deps
+
       - name: Run unit tests
         env:
           GOFLAGS: -mod=mod -modcacherw
