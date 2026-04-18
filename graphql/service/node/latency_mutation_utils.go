@@ -20,6 +20,7 @@ import (
 )
 
 const latencyProbeConcurrency = 8
+const latencyProbeTimeout = 5 * time.Second
 
 func TestLatencies(ctx context.Context, ids *[]graphql.ID) ([]*LatencyResolver, error) {
 	option, err := latencyProbeOption(ctx)
@@ -51,7 +52,7 @@ func testLatencyResultsForNodes(option *dialer.GlobalOption, nodes []db.Node) []
 			defer func() { <-sem }()
 
 			node := nodes[index]
-			results[index] = testSingleNodeLatency(option, &node)
+			results[index] = testSingleNodeLatency(ctx, option, &node)
 		}()
 	}
 
@@ -93,14 +94,17 @@ func latencyProbeNodes(ctx context.Context, ids *[]graphql.ID) ([]db.Node, error
 	return nodes, nil
 }
 
-func testSingleNodeLatency(option *dialer.GlobalOption, node *db.Node) *LatencyResolver {
+func testSingleNodeLatency(ctx context.Context, option *dialer.GlobalOption, node *db.Node) *LatencyResolver {
 	resolver := &LatencyResolver{
 		NodeID:    node.ID,
 		AliveVal:  false,
 		TestedAtV: time.Now(),
 	}
 
-	d, err := dialer.NewFromLink(option, dialer.InstanceOption{DisableCheck: false}, node.Link, "")
+	probeCtx, cancel := context.WithTimeout(ctx, latencyProbeTimeout)
+	defer cancel()
+
+	d, err := dialer.NewFromLinkContext(probeCtx, option, dialer.InstanceOption{DisableCheck: true}, node.Link, "")
 	if err != nil {
 		msg := err.Error()
 		resolver.MessageV = &msg
