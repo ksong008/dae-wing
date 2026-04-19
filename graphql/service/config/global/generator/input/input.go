@@ -13,6 +13,7 @@ import (
 	"time"
 
 	daeConfig "github.com/daeuniverse/dae/config"
+	"github.com/sirupsen/logrus"
 	"github.com/stoewer/go-strcase"
 )
 
@@ -77,6 +78,17 @@ func (b *builder) Build() (string, error) {
 		switch field := field.Interface().(type) {
 		case uint, uint8, uint16, uint32, uint64,
 			int, int8, int16, int32, int64:
+			// Int.
+			switch field.(type) {
+			case uint, uint32, uint64, int64:
+				if structField.Name != "SoMarkFromDae" {
+					logrus.WithFields(logrus.Fields{
+						"name": structField.Name,
+						"type": structField.Type.String(),
+					}).Debugln("converting to graphQL int32: may exceed range for large values")
+				}
+			}
+
 			b.WriteField(name, "int32")
 			b.WriteMethodTransform(structField.Name, name, structField.Type.String(), true)
 		case string, bool, []string:
