@@ -68,10 +68,12 @@ func (b *builder) Build() (string, error) {
 			// Int.
 			switch field.(type) {
 			case uint, uint32, uint64, int64:
-				logrus.WithFields(logrus.Fields{
-					"name": structField.Name,
-					"type": structField.Type.String(),
-				}).Debugln("converting to graphQL int32: may exceed range for large values")
+				if structField.Name != "SoMarkFromDae" {
+					logrus.WithFields(logrus.Fields{
+						"name": structField.Name,
+						"type": structField.Type.String(),
+					}).Debugln("converting to graphQL int32: may exceed range for large values")
+				}
 			}
 
 			b.WriteFunc(structField.Name, name, "int32", true)
