@@ -15,6 +15,13 @@ func resetNodeLatencyCache() {
 	defer nodeLatencyCache.mu.Unlock()
 	nodeLatencyCache.updatedAt = time.Time{}
 	nodeLatencyCache.items = map[uint]*LatencyResolver{}
+
+	selectedCheckIntervalCache.mu.Lock()
+	defer selectedCheckIntervalCache.mu.Unlock()
+	selectedCheckIntervalCache.configID = 0
+	selectedCheckIntervalCache.version = 0
+	selectedCheckIntervalCache.interval = 0
+	selectedCheckIntervalCache.ok = false
 }
 
 func TestStoreLatencyResultsReplacesOldEntries(t *testing.T) {
@@ -74,5 +81,26 @@ func TestSnapshotCachedLatencyResultsForOnlyRequestedNodes(t *testing.T) {
 	resolver.LatencyMsV = &updated
 	if *nodeLatencyCache.items[2].LatencyMsV != latency2 {
 		t.Fatal("expected snapshot clone to be detached from cache entry")
+	}
+}
+
+func TestSelectedCheckIntervalCacheMatchesConfigVersion(t *testing.T) {
+	resetNodeLatencyCache()
+
+	storeSelectedCheckInterval(7, 3, 45*time.Second)
+
+	interval, ok := cachedSelectedCheckInterval(7, 3)
+	if !ok {
+		t.Fatal("expected cached interval to be found")
+	}
+	if interval != 45*time.Second {
+		t.Fatalf("expected cached interval 45s, got %v", interval)
+	}
+
+	if _, ok := cachedSelectedCheckInterval(7, 4); ok {
+		t.Fatal("expected cache miss after version change")
+	}
+	if _, ok := cachedSelectedCheckInterval(8, 3); ok {
+		t.Fatal("expected cache miss for different config id")
 	}
 }

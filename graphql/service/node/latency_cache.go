@@ -25,6 +25,14 @@ var nodeLatencyCache = struct {
 	items: map[uint]*LatencyResolver{},
 }
 
+var selectedCheckIntervalCache = struct {
+	mu       sync.RWMutex
+	configID uint
+	version  uint
+	interval time.Duration
+	ok       bool
+}{}
+
 func cloneLatencyResolver(resolver *LatencyResolver) *LatencyResolver {
 	if resolver == nil {
 		return nil
@@ -81,6 +89,29 @@ func lastLatencyCacheUpdatedAt() time.Time {
 	nodeLatencyCache.mu.RLock()
 	defer nodeLatencyCache.mu.RUnlock()
 	return nodeLatencyCache.updatedAt
+}
+
+func cachedSelectedCheckInterval(configID uint, version uint) (time.Duration, bool) {
+	selectedCheckIntervalCache.mu.RLock()
+	defer selectedCheckIntervalCache.mu.RUnlock()
+
+	if !selectedCheckIntervalCache.ok {
+		return 0, false
+	}
+	if selectedCheckIntervalCache.configID != configID || selectedCheckIntervalCache.version != version {
+		return 0, false
+	}
+	return selectedCheckIntervalCache.interval, true
+}
+
+func storeSelectedCheckInterval(configID uint, version uint, interval time.Duration) {
+	selectedCheckIntervalCache.mu.Lock()
+	defer selectedCheckIntervalCache.mu.Unlock()
+
+	selectedCheckIntervalCache.configID = configID
+	selectedCheckIntervalCache.version = version
+	selectedCheckIntervalCache.interval = interval
+	selectedCheckIntervalCache.ok = true
 }
 
 func loadRuntimeLatencyResults(ctx context.Context, nodes []db.Node) (map[uint]*LatencyResolver, error) {
@@ -153,16 +184,22 @@ func selectedCheckInterval(ctx context.Context) (time.Duration, error) {
 		return 0, err
 	}
 
+	if interval, ok := cachedSelectedCheckInterval(configModel.ID, configModel.Version); ok {
+		return interval, nil
+	}
+
 	parsedConfig, err := dae.ParseConfig(&configModel.Global, nil, nil)
 	if err != nil {
 		return 0, err
 	}
 
-	if parsedConfig.Global.CheckInterval <= 0 {
-		return 30 * time.Second, nil
+	interval := parsedConfig.Global.CheckInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
 	}
+	storeSelectedCheckInterval(configModel.ID, configModel.Version, interval)
 
-	return parsedConfig.Global.CheckInterval, nil
+	return interval, nil
 }
 
 func refreshLatencyCache(ctx context.Context) error {
