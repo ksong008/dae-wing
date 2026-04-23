@@ -73,6 +73,18 @@ func (r *RuntimeOverviewResolver) UdpSessions() int32 {
 	return int32(r.Overview.UDPSessions)
 }
 
+func (r *RuntimeOverviewResolver) RssBytes() string {
+	return strconv.FormatUint(r.Overview.RSSBytes, 10)
+}
+
+func (r *RuntimeOverviewResolver) HeapAllocBytes() string {
+	return strconv.FormatUint(r.Overview.HeapAllocBytes, 10)
+}
+
+func (r *RuntimeOverviewResolver) Goroutines() int32 {
+	return int32(r.Overview.Goroutines)
+}
+
 func (r *RuntimeOverviewResolver) Samples() []*RuntimeTrafficSampleResolver {
 	return r.sampleResolvers
 }

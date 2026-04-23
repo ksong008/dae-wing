@@ -42,6 +42,9 @@ type RuntimeOverview {
   downloadTotal: String!
   activeConnections: Int!
   udpSessions: Int!
+  rssBytes: String!
+  heapAllocBytes: String!
+  goroutines: Int!
   samples: [RuntimeTrafficSample!]!
 }
 type RuntimeTrafficSample {
