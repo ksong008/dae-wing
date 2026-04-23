@@ -34,10 +34,23 @@ func nodeTransport(protocol string, link string) *string {
 		}
 	case "shadowsocks":
 		if parsed, err := shadowsocksdialer.ParseSSURL(link); err == nil {
+			if strings.HasPrefix(strings.ToLower(parsed.Cipher), "2022-blake3-") {
+				return transportLabel("ss2022", "")
+			}
 			if parsed.Plugin.Name == "v2ray-plugin" {
 				return transportLabel("ws", "")
 			}
-			return transportLabel("tcp", "")
+			if parsed.Plugin.Name == "simple-obfs" && parsed.Plugin.Opts.Obfs != "" {
+				return transportLabel(parsed.Plugin.Opts.Obfs, "")
+			}
+			return nil
+		}
+	case "shadowsocksr":
+		if parsed, err := shadowsocksrdialer.ParseSSRURL(link); err == nil {
+			if parsed.Obfs != "" && parsed.Obfs != "plain" {
+				return transportLabel(parsed.Proto+" · "+parsed.Obfs, "")
+			}
+			return transportLabel(parsed.Proto, "")
 		}
 	case "tuic":
 		if _, err := tuicdialer.ParseTuicURL(link); err == nil {
@@ -52,14 +65,14 @@ func nodeTransport(protocol string, link string) *string {
 			return transportLabel("quic", "")
 		}
 	case "anytls":
-		return transportLabel("tcp", "")
+		return nil
 	case "http", "https":
 		if _, err := httpdialer.ParseHTTPURL(link); err == nil {
-			return transportLabel("tcp", "")
+			return nil
 		}
 	case "socks5":
 		if _, err := socksdialer.ParseSocksURL(link); err == nil {
-			return transportLabel("tcp", "")
+			return nil
 		}
 	}
 
@@ -67,11 +80,11 @@ func nodeTransport(protocol string, link string) *string {
 }
 
 func transportLabel(raw string, fallback string) *string {
-	value := strings.ToLower(strings.TrimSpace(raw))
+	value := strings.TrimSpace(raw)
 	if value == "" {
 		value = fallback
 	}
-	switch value {
+	switch strings.ToLower(value) {
 	case "", "none":
 		return nil
 	case "websocket":

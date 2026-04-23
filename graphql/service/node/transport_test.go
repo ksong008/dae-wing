@@ -39,6 +39,18 @@ func TestNodeTransport(t *testing.T) {
 			want:     strPtr("quic"),
 		},
 		{
+			name:     "ss2022 label",
+			protocol: "shadowsocks",
+			link:     "ss://2022-blake3-aes-128-gcm:%2BmPWWGB%2F%2FPLkjgiXVeWszg%3D%3D@example.com:8388#demo",
+			want:     strPtr("ss2022"),
+		},
+		{
+			name:     "ssr proto and obfs",
+			protocol: "shadowsocksr",
+			link:     "ssr://ZXhhbXBsZS5jb206ODM4ODphdXRoX2NoYWluX2E6YWVzLTEyOC1jZmI6dGxzMS4yX3RpY2tldF9hdXRoLz9remarks=ZGVtbw==&protoparam=&obfsparam=",
+			want:     strPtr("auth_chain_a · tls1.2_ticket_auth"),
+		},
+		{
 			name:     "invalid link",
 			protocol: "vless",
 			link:     "not-a-link",
