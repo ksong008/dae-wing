@@ -30,6 +30,9 @@ func (r *Resolver) Address() string {
 func (r *Resolver) Protocol() string {
 	return r.Node.Protocol
 }
+func (r *Resolver) Transport() *string {
+	return nodeTransport(r.Node.Protocol, r.Node.Link)
+}
 func (r *Resolver) Tag() *string {
 	return r.Node.Tag
 }

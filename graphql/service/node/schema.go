@@ -13,6 +13,7 @@ type Node {
 	name: String!
 	address: String!
 	protocol: String!
+	transport: String
 	tag: String
 	subscriptionID: ID
 }
