@@ -12,6 +12,7 @@ import (
 	hysteria2dialer "github.com/daeuniverse/outbound/dialer/hysteria2"
 	juicitydialer "github.com/daeuniverse/outbound/dialer/juicity"
 	shadowsocksdialer "github.com/daeuniverse/outbound/dialer/shadowsocks"
+	shadowsocksrdialer "github.com/daeuniverse/outbound/dialer/shadowsocksr"
 	socksdialer "github.com/daeuniverse/outbound/dialer/socks"
 	trojandialer "github.com/daeuniverse/outbound/dialer/trojan"
 	tuicdialer "github.com/daeuniverse/outbound/dialer/tuic"
