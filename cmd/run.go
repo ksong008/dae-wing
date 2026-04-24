@@ -139,12 +139,20 @@ var (
 				}
 				logrus.Printf("Listen on %v", listen)
 			listenAndServe:
-				if err = http.ListenAndServe(listen, mux); err != nil {
+				server := &http.Server{
+					Addr:              listen,
+					Handler:           mux,
+					ReadHeaderTimeout: 5 * time.Second,
+					ReadTimeout:       30 * time.Second,
+					WriteTimeout:      60 * time.Second,
+					IdleTimeout:       120 * time.Second,
+				}
+				if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					errorExit(err)
 				}
 			}()
 			sigs := make(chan os.Signal, 1)
-			signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGKILL, syscall.SIGILL)
+			signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGILL)
 			for sig := range sigs {
 				_errorExit(errors.New(sig.String()))
 				return
@@ -225,7 +233,7 @@ func auth(next http.Handler) http.Handler {
 			if err != nil {
 				return nil, err
 			}
-			q := db.DB(context.TODO()).Model(&db.User{}).Where("username = ?", subject).First(&user)
+			q := db.DB(r.Context()).Model(&db.User{}).Where("username = ?", subject).First(&user)
 			if q.Error != nil {
 				return nil, q.Error
 			}
@@ -234,7 +242,7 @@ func auth(next http.Handler) http.Handler {
 			}
 			return []byte(user.JwtSecret), nil
 		})
-		ctx := context.Background()
+		ctx := r.Context()
 		if err == nil {
 			if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 				if expireAt, err := token.Claims.GetExpirationTime(); err == nil && time.Now().Before(expireAt.Time) {

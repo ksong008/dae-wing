@@ -1,3 +1,6 @@
 [submodule "dae-core"]
 	path = dae-core
 	url = https://github.com/ksong008/dae
+[submodule "outbound"]
+	path = outbound
+	url = https://github.com/ksong008/outbound

@@ -72,11 +72,11 @@ func _fetchLinks(subscriptionLink string, transport http.RoundTripper, timeout t
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("failed to fetch link: %v", resp.Status)
 	}
-	defer resp.Body.Close()
-	b, err = io.ReadAll(resp.Body)
+	b, err = subscription.ReadAllLimited(resp.Body, subscription.MaxSubscriptionBytes)
 	if err != nil {
 		return nil, err
 	}

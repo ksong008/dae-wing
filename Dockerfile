@@ -1,5 +1,5 @@
 # wing/Dockerfile
-FROM golang:1.22-bookworm as builder
+FROM golang:1.24.3-bookworm AS builder
 
 WORKDIR /build
 
