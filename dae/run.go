@@ -119,6 +119,9 @@ func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string,
 	/* dae-wing start */
 	var errReload error
 	var chCallback chan<- error
+	var pendingControlPlane *control.ControlPlane
+	var pendingConf *daeConfig.Config
+	var pendingCallback chan<- error
 	/* dae-wing end */
 loop:
 	for newReloadMsg := range ChReloadConfigs {
@@ -135,6 +138,13 @@ loop:
 					break loop
 				}
 				// Serve.
+				c = pendingControlPlane
+				conf = pendingConf
+				chCallback = pendingCallback
+				pendingControlPlane = nil
+				pendingConf = nil
+				pendingCallback = nil
+				storeControlPlane(c)
 				reloading = false
 				log.Warnln("[Reload] Serve")
 				readyChan := make(chan bool, 1)
@@ -206,12 +216,11 @@ loop:
 
 			// Prepare new context.
 			oldC := c
-			c = newC
-			storeControlPlane(c)
-			conf = newConf
+			pendingControlPlane = newC
+			pendingConf = newConf
 			reloading = true
 			/* dae-wing start */
-			chCallback = newReloadMsg.Callback
+			pendingCallback = newReloadMsg.Callback
 			/* dae-wing end */
 
 			// Ready to close.
