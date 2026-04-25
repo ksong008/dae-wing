@@ -258,19 +258,33 @@ func Rename(ctx context.Context, _id graphql.ID, name string) (n int32, err erro
 
 var runLock sync.Mutex
 
-func Run(d *gorm.DB, noLoad bool) (n int32, err error) {
+func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
+	chReloadCallback := make(chan error, 1)
+	msg := &dae.ReloadMessage{
+		Config:   cfg,
+		Callback: chReloadCallback,
+	}
+	select {
+	case dae.ChReloadConfigs <- msg:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-chReloadCallback:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func Run(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error) {
 	if ok := runLock.TryLock(); !ok {
 		return 0, fmt.Errorf("the last request didn't complete; make a cup of tea and take a break")
 	}
 	defer runLock.Unlock()
 	//// Dry run.
 	if noLoad {
-		ch := make(chan error, 1)
-		dae.ChReloadConfigs <- &dae.ReloadMessage{
-			Config:   dae.EmptyConfig,
-			Callback: ch,
-		}
-		err = <-ch
+		err = reloadWithContext(ctx, dae.EmptyConfig)
 		if err != nil {
 			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
 		}
@@ -454,12 +468,7 @@ func Run(d *gorm.DB, noLoad bool) (n int32, err error) {
 	}
 
 	/// Reload with current config.
-	chReloadCallback := make(chan error, 1)
-	dae.ChReloadConfigs <- &dae.ReloadMessage{
-		Config:   c,
-		Callback: chReloadCallback,
-	}
-	errReload := <-chReloadCallback
+	errReload := reloadWithContext(ctx, c)
 	if errReload != nil {
 		return 0, fmt.Errorf("failed to load new config: %w; see more in log", errReload)
 	}
