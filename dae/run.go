@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/daeuniverse/dae/common/netutils"
 	daeConfig "github.com/daeuniverse/dae/config"
@@ -137,6 +136,11 @@ loop:
 			if reloading {
 				if result.listener == nil {
 					// Failed to listen. Exit.
+					if result.err == nil {
+						result.err = fmt.Errorf("reload failed before listener became ready")
+					}
+					errReload = result.err
+					notifyReloadCallback(pendingCallback, errReload)
 					break loop
 				}
 				// Serve.
@@ -146,6 +150,7 @@ loop:
 				pendingControlPlane = nil
 				pendingConf = nil
 				pendingCallback = nil
+				reconfigureLoggers(log, conf.Global.LogLevel, disableTimestamp)
 				storeControlPlane(c)
 				reloading = false
 				log.Warnln("[Reload] Serve")
@@ -171,30 +176,25 @@ loop:
 			if newReloadMsg == nil {
 				break loop
 			}
+			if reloading {
+				notifyReloadCallback(newReloadMsg.Callback, fmt.Errorf("reload already in progress"))
+				continue
+			}
 			// Reload signal.
-			reloadStartedAt := time.Now()
 			log.Warnln("[Reload] Received reload signal; prepare to reload")
 
 			/* dae-wing start */
 			newConf := newReloadMsg.Config
 			/* dae-wing end */
-			// Reconfigure logger in place to preserve writer/locks and avoid
-			// swapping the logger object out from under concurrent users.
-			reconfigureLoggers(log, newConf.Global.LogLevel, disableTimestamp)
-
 			// New control plane.
-			tEjectBpf := time.Now()
 			obj := c.EjectBpf()
-			log.WithField("duration", time.Since(tEjectBpf)).Warnln("[Reload] Eject BPF finished")
 			// Do not clone dns cache on reload.
 			// The current dae-core reload path no longer restores the cloned cache
 			// into the new controller/domain-routing state, so copying it here only
 			// adds reload-time allocations without preserving useful runtime state.
 			var dnsCache map[string]*control.DnsCache
-			tNewControlPlane := time.Now()
 			log.Warnln("[Reload] Load new control plane")
 			newC, err := newControlPlane(log, obj, dnsCache, newConf, externGeoDataDirs)
-			log.WithField("duration", time.Since(tNewControlPlane)).Warnln("[Reload] New control plane finished")
 			if err != nil {
 				/* dae-wing start */
 				errReload = err
@@ -215,8 +215,6 @@ loop:
 				newConf = conf
 				log.Errorln("[Reload] Last reload failed; rolled back configuration")
 			} else {
-				log.Warnln("[Reload] Stopped old control plane")
-
 				/* dae-wing start */
 				errReload = nil
 				/* dae-wing end */
@@ -235,12 +233,8 @@ loop:
 			/* dae-wing end */
 
 			// Ready to close.
-			tCloseOldControlPlane := time.Now()
 			oldC.Close()
-			log.WithFields(logrus.Fields{
-				"duration": time.Since(tCloseOldControlPlane),
-				"total":    time.Since(reloadStartedAt),
-			}).Warnln("[Reload] Old control plane closed")
+			log.Warnln("[Reload] Stopped old control plane")
 		}
 	}
 	storeControlPlane(nil)

@@ -23,7 +23,6 @@ import (
 	daeConfig "github.com/daeuniverse/dae/config"
 	"github.com/daeuniverse/dae/pkg/config_parser"
 	"github.com/graph-gophers/graphql-go"
-	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -260,50 +259,35 @@ func Rename(ctx context.Context, _id graphql.ID, name string) (n int32, err erro
 
 var runLock sync.Mutex
 
+const reloadCallbackTimeout = 2 * time.Minute
+
 func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
 	chReloadCallback := make(chan error, 1)
 	msg := &dae.ReloadMessage{
 		Config:   cfg,
 		Callback: chReloadCallback,
 	}
-	logrus.Warnln("[Reload] GraphQL reload request sending")
 	select {
 	case dae.ChReloadConfigs <- msg:
-		logrus.Warnln("[Reload] GraphQL reload request delivered")
 	case <-ctx.Done():
-		logrus.WithError(ctx.Err()).Warnln("[Reload] GraphQL reload request canceled before delivery")
 		return ctx.Err()
 	}
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), reloadCallbackTimeout)
+	defer cancel()
 	select {
 	case err := <-chReloadCallback:
-		if err != nil {
-			logrus.WithError(err).Warnln("[Reload] GraphQL reload callback failed")
-		} else {
-			logrus.Warnln("[Reload] GraphQL reload callback succeeded")
-		}
 		return err
-	case <-ctx.Done():
-		logrus.WithError(ctx.Err()).Warnln("[Reload] GraphQL reload request canceled while waiting callback")
-		return ctx.Err()
+	case <-waitCtx.Done():
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("reload timed out after %s", reloadCallbackTimeout)
+		}
+		return waitCtx.Err()
 	}
 }
 
 func Run(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error) {
-	runStartedAt := time.Now()
-	logrus.WithField("dry", noLoad).Warnln("[Reload] Config run started")
-	defer func() {
-		entry := logrus.WithFields(logrus.Fields{
-			"dry":      noLoad,
-			"duration": time.Since(runStartedAt),
-		})
-		if err != nil {
-			entry.WithError(err).Warnln("[Reload] Config run failed")
-			return
-		}
-		entry.Warnln("[Reload] Config run finished")
-	}()
 	if ok := runLock.TryLock(); !ok {
-		logrus.Warnln("[Reload] Config run skipped because another run is still active")
 		return 0, fmt.Errorf("the last request didn't complete; make a cup of tea and take a break")
 	}
 	defer runLock.Unlock()
