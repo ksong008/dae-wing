@@ -110,6 +110,9 @@ var (
 				}
 				os.Exit(1)
 			}()
+			if err := restoreRunningState(); err != nil {
+				logrus.Warnln("Failed to restore last running state:", err)
+			}
 			// ListenAndServe GraphQL.
 			schema, err := graphql.Schema()
 			if err != nil {
@@ -144,11 +147,6 @@ var (
 				}
 				if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					errorExit(err)
-				}
-			}()
-			go func() {
-				if err := restoreRunningState(); err != nil {
-					logrus.Warnln("Failed to restore last running state:", err)
 				}
 			}()
 			sigs := make(chan os.Signal, 1)
