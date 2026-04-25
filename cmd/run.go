@@ -108,7 +108,6 @@ var (
 				); err != nil {
 					logrus.Fatalln("dae.Run:", err)
 				}
-				os.Exit(1)
 			}()
 			if err := restoreRunningState(); err != nil {
 				logrus.Warnln("Failed to restore last running state:", err)

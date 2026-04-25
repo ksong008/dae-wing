@@ -170,6 +170,11 @@ loop:
 				/* dae-wing end */
 			} else {
 				// Listening error.
+				if result.err != nil {
+					err = result.err
+				} else {
+					err = fmt.Errorf("control plane listener stopped unexpectedly")
+				}
 				break loop
 			}
 		case newReloadMsg := <-ChReloadConfigs:
@@ -177,6 +182,7 @@ loop:
 				break loop
 			}
 			if reloading {
+				log.Warnln("[Reload] Rejected reload signal because another reload is still in progress")
 				notifyReloadCallback(newReloadMsg.Callback, fmt.Errorf("reload already in progress"))
 				continue
 			}
@@ -234,6 +240,7 @@ loop:
 
 			// Ready to close.
 			oldC.Close()
+			control.FlushReloadScopedResources()
 			log.Warnln("[Reload] Stopped old control plane")
 		}
 	}
@@ -241,7 +248,7 @@ loop:
 	if e := c.Close(); e != nil {
 		return fmt.Errorf("close control plane: %w", e)
 	}
-	return nil
+	return err
 }
 
 func newControlPlane(log *logrus.Logger, bpf interface{}, dnsCache map[string]*control.DnsCache, conf *daeConfig.Config, externGeoDataDirs []string) (c *control.ControlPlane, err error) {
