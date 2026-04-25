@@ -167,6 +167,9 @@ loop:
 				break loop
 			}
 		case newReloadMsg := <-ChReloadConfigs:
+			if newReloadMsg == nil {
+				break loop
+			}
 			// Reload signal.
 			log.Warnln("[Reload] Received reload signal; prepare to reload")
 
