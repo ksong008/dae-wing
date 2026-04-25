@@ -260,6 +260,7 @@ func Rename(ctx context.Context, _id graphql.ID, name string) (n int32, err erro
 var runLock sync.Mutex
 
 const reloadCallbackTimeout = 2 * time.Minute
+const reloadRequestTimeout = 5 * time.Second
 
 func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
 	chReloadCallback := make(chan error, 1)
@@ -267,10 +268,12 @@ func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
 		Config:   cfg,
 		Callback: chReloadCallback,
 	}
+	sendCtx, cancelSend := context.WithTimeout(ctx, reloadRequestTimeout)
+	defer cancelSend()
 	select {
 	case dae.ChReloadConfigs <- msg:
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-sendCtx.Done():
+		return fmt.Errorf("reload request was not accepted within %s: %w", reloadRequestTimeout, sendCtx.Err())
 	}
 
 	waitCtx, cancel := context.WithTimeout(context.Background(), reloadCallbackTimeout)
@@ -292,13 +295,15 @@ func Run(ctx context.Context, noLoad bool) (n int32, err error) {
 	}
 	defer runLock.Unlock()
 
-	tx := db.BeginTx(ctx)
+	tx := db.BeginTx(context.Background())
 	if tx.Error != nil {
 		return 0, tx.Error
 	}
 	defer func() {
 		if err == nil {
-			tx.Commit()
+			if commitErr := tx.Commit().Error; commitErr != nil {
+				err = commitErr
+			}
 		} else {
 			tx.Rollback()
 		}
