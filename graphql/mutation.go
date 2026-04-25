@@ -253,10 +253,17 @@ func (r *MutationResolver) SelectConfig(args *struct {
 	return config.Select(context.TODO(), args.ID)
 }
 
-func (r *MutationResolver) Run(ctx context.Context, args *struct {
+func (r *MutationResolver) Run(args *struct {
 	Dry bool
 }) (int32, error) {
-	return config.Run(ctx, args.Dry)
+	tx := db.BeginTx(context.TODO())
+	ret, err := config.Run(tx, args.Dry)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	tx.Commit()
+	return ret, nil
 }
 
 func (r *MutationResolver) CreateDns(args *struct {

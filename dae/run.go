@@ -29,11 +29,6 @@ type ReloadMessage struct {
 	Callback chan<- error
 }
 
-type serveResult struct {
-	listener *control.Listener
-	err      error
-}
-
 var ChReloadConfigs = make(chan *ReloadMessage)
 var GracefullyExit = make(chan struct{})
 var EmptyConfig *daeConfig.Config
@@ -104,65 +99,52 @@ func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string,
 	defer storeControlPlane(nil)
 
 	// Serve tproxy TCP/UDP server util signals.
-	serveDoneCh := make(chan serveResult, 1)
+	var listener *control.Listener
 	go func() {
 		readyChan := make(chan bool, 1)
 		go func() {
 			<-readyChan
 			log.Infoln("Ready")
 		}()
-		var listener *control.Listener
-		var serveErr error
 		control.GetDaeNetns().With(func() error {
-			if listener, serveErr = c.ListenAndServe(readyChan, conf.Global.TproxyPort); serveErr != nil {
-				log.Errorln("ListenAndServe:", serveErr)
+			if listener, err = c.ListenAndServe(readyChan, conf.Global.TproxyPort); err != nil {
+				log.Errorln("ListenAndServe:", err)
 			}
-			return serveErr
+			return err
 		})
-		serveDoneCh <- serveResult{listener: listener, err: serveErr}
+		// Exit
+		ChReloadConfigs <- nil
 	}()
 	reloading := false
 	/* dae-wing start */
 	var errReload error
 	var chCallback chan<- error
-	var pendingControlPlane *control.ControlPlane
-	var pendingConf *daeConfig.Config
-	var pendingCallback chan<- error
 	/* dae-wing end */
 loop:
-	for {
-		select {
-		case result := <-serveDoneCh:
+	for newReloadMsg := range ChReloadConfigs {
+		switch newReloadMsg {
+		case nil:
+			/* dae-wing start */
+			// We will receive nil after control plane being Closed.
+			// We'll judge if we are in a reloading.
+			/* dae-wing end */
+
 			if reloading {
-				if result.listener == nil {
+				if listener == nil {
 					// Failed to listen. Exit.
-					if result.err == nil {
-						result.err = fmt.Errorf("reload failed before listener became ready")
-					}
-					errReload = result.err
-					notifyReloadCallback(pendingCallback, errReload)
 					break loop
 				}
 				// Serve.
-				c = pendingControlPlane
-				conf = pendingConf
-				chCallback = pendingCallback
-				pendingControlPlane = nil
-				pendingConf = nil
-				pendingCallback = nil
-				reconfigureLoggers(log, conf.Global.LogLevel, disableTimestamp)
-				storeControlPlane(c)
 				reloading = false
 				log.Warnln("[Reload] Serve")
 				readyChan := make(chan bool, 1)
-				go func(listener *control.Listener) {
+				go func() {
 					if err := c.Serve(readyChan, listener); err != nil {
 						log.Errorln("ListenAndServe:", err)
-						serveDoneCh <- serveResult{listener: listener, err: err}
-						return
 					}
-					serveDoneCh <- serveResult{listener: listener, err: nil}
-				}(result.listener)
+					// Exit
+					ChReloadConfigs <- nil
+				}()
 				<-readyChan
 				log.Warnln("[Reload] Finished")
 				/* dae-wing start */
@@ -172,20 +154,16 @@ loop:
 				// Listening error.
 				break loop
 			}
-		case newReloadMsg := <-ChReloadConfigs:
-			if newReloadMsg == nil {
-				break loop
-			}
-			if reloading {
-				notifyReloadCallback(newReloadMsg.Callback, fmt.Errorf("reload already in progress"))
-				continue
-			}
+		default:
 			// Reload signal.
 			log.Warnln("[Reload] Received reload signal; prepare to reload")
 
 			/* dae-wing start */
 			newConf := newReloadMsg.Config
 			/* dae-wing end */
+			// Reconfigure logger in place to preserve writer/locks and avoid
+			// swapping the logger object out from under concurrent users.
+			reconfigureLoggers(log, newConf.Global.LogLevel, disableTimestamp)
 			// New control plane.
 			obj := c.EjectBpf()
 			// Do not clone dns cache on reload.
@@ -215,6 +193,8 @@ loop:
 				newConf = conf
 				log.Errorln("[Reload] Last reload failed; rolled back configuration")
 			} else {
+				log.Warnln("[Reload] Stopped old control plane")
+
 				/* dae-wing start */
 				errReload = nil
 				/* dae-wing end */
@@ -225,16 +205,16 @@ loop:
 
 			// Prepare new context.
 			oldC := c
-			pendingControlPlane = newC
-			pendingConf = newConf
+			c = newC
+			storeControlPlane(c)
+			conf = newConf
 			reloading = true
 			/* dae-wing start */
-			pendingCallback = newReloadMsg.Callback
+			chCallback = newReloadMsg.Callback
 			/* dae-wing end */
 
 			// Ready to close.
 			oldC.Close()
-			log.Warnln("[Reload] Stopped old control plane")
 		}
 	}
 	storeControlPlane(nil)
