@@ -92,6 +92,9 @@ func Update(d *gorm.DB, _id graphql.ID, link string) (r *Resolver, err error) {
 	if q.RowsAffected == 0 {
 		return nil, fmt.Errorf("no such node")
 	}
+	if err = AutoUpdateVersionByIds(d, []uint{id}); err != nil {
+		return nil, err
+	}
 	return &Resolver{
 		Node: newModel,
 	}, nil
