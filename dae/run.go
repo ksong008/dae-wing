@@ -29,6 +29,11 @@ type ReloadMessage struct {
 	Callback chan<- error
 }
 
+type serveResult struct {
+	listener *control.Listener
+	err      error
+}
+
 var ChReloadConfigs = make(chan *ReloadMessage)
 var GracefullyExit = make(chan struct{})
 var EmptyConfig *daeConfig.Config
@@ -99,21 +104,22 @@ func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string,
 	defer storeControlPlane(nil)
 
 	// Serve tproxy TCP/UDP server util signals.
-	var listener *control.Listener
+	serveDoneCh := make(chan serveResult, 1)
 	go func() {
 		readyChan := make(chan bool, 1)
 		go func() {
 			<-readyChan
 			log.Infoln("Ready")
 		}()
+		var listener *control.Listener
+		var serveErr error
 		control.GetDaeNetns().With(func() error {
-			if listener, err = c.ListenAndServe(readyChan, conf.Global.TproxyPort); err != nil {
-				log.Errorln("ListenAndServe:", err)
+			if listener, serveErr = c.ListenAndServe(readyChan, conf.Global.TproxyPort); serveErr != nil {
+				log.Errorln("ListenAndServe:", serveErr)
 			}
-			return err
+			return serveErr
 		})
-		// Exit
-		ChReloadConfigs <- nil
+		serveDoneCh <- serveResult{listener: listener, err: serveErr}
 	}()
 	reloading := false
 	/* dae-wing start */
@@ -124,16 +130,11 @@ func Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string,
 	var pendingCallback chan<- error
 	/* dae-wing end */
 loop:
-	for newReloadMsg := range ChReloadConfigs {
-		switch newReloadMsg {
-		case nil:
-			/* dae-wing start */
-			// We will receive nil after control plane being Closed.
-			// We'll judge if we are in a reloading.
-			/* dae-wing end */
-
+	for {
+		select {
+		case result := <-serveDoneCh:
 			if reloading {
-				if listener == nil {
+				if result.listener == nil {
 					// Failed to listen. Exit.
 					break loop
 				}
@@ -148,13 +149,14 @@ loop:
 				reloading = false
 				log.Warnln("[Reload] Serve")
 				readyChan := make(chan bool, 1)
-				go func() {
+				go func(listener *control.Listener) {
 					if err := c.Serve(readyChan, listener); err != nil {
 						log.Errorln("ListenAndServe:", err)
+						serveDoneCh <- serveResult{listener: listener, err: err}
+						return
 					}
-					// Exit
-					ChReloadConfigs <- nil
-				}()
+					serveDoneCh <- serveResult{listener: listener, err: nil}
+				}(result.listener)
 				<-readyChan
 				log.Warnln("[Reload] Finished")
 				/* dae-wing start */
@@ -164,7 +166,7 @@ loop:
 				// Listening error.
 				break loop
 			}
-		default:
+		case newReloadMsg := <-ChReloadConfigs:
 			// Reload signal.
 			log.Warnln("[Reload] Received reload signal; prepare to reload")
 
