@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/daeuniverse/dae/common/netutils"
 	daeConfig "github.com/daeuniverse/dae/config"
@@ -171,6 +172,7 @@ loop:
 				break loop
 			}
 			// Reload signal.
+			reloadStartedAt := time.Now()
 			log.Warnln("[Reload] Received reload signal; prepare to reload")
 
 			/* dae-wing start */
@@ -181,14 +183,18 @@ loop:
 			reconfigureLoggers(log, newConf.Global.LogLevel, disableTimestamp)
 
 			// New control plane.
+			tEjectBpf := time.Now()
 			obj := c.EjectBpf()
+			log.WithField("duration", time.Since(tEjectBpf)).Warnln("[Reload] Eject BPF finished")
 			// Do not clone dns cache on reload.
 			// The current dae-core reload path no longer restores the cloned cache
 			// into the new controller/domain-routing state, so copying it here only
 			// adds reload-time allocations without preserving useful runtime state.
 			var dnsCache map[string]*control.DnsCache
+			tNewControlPlane := time.Now()
 			log.Warnln("[Reload] Load new control plane")
 			newC, err := newControlPlane(log, obj, dnsCache, newConf, externGeoDataDirs)
+			log.WithField("duration", time.Since(tNewControlPlane)).Warnln("[Reload] New control plane finished")
 			if err != nil {
 				/* dae-wing start */
 				errReload = err
@@ -229,7 +235,12 @@ loop:
 			/* dae-wing end */
 
 			// Ready to close.
+			tCloseOldControlPlane := time.Now()
 			oldC.Close()
+			log.WithFields(logrus.Fields{
+				"duration": time.Since(tCloseOldControlPlane),
+				"total":    time.Since(reloadStartedAt),
+			}).Warnln("[Reload] Old control plane closed")
 		}
 	}
 	storeControlPlane(nil)

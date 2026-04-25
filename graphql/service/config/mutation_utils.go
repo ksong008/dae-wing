@@ -22,6 +22,7 @@ import (
 	daeConfig "github.com/daeuniverse/dae/config"
 	"github.com/daeuniverse/dae/pkg/config_parser"
 	"github.com/graph-gophers/graphql-go"
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -264,15 +265,24 @@ func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
 		Config:   cfg,
 		Callback: chReloadCallback,
 	}
+	logrus.Warnln("[Reload] GraphQL reload request sending")
 	select {
 	case dae.ChReloadConfigs <- msg:
+		logrus.Warnln("[Reload] GraphQL reload request delivered")
 	case <-ctx.Done():
+		logrus.WithError(ctx.Err()).Warnln("[Reload] GraphQL reload request canceled before delivery")
 		return ctx.Err()
 	}
 	select {
 	case err := <-chReloadCallback:
+		if err != nil {
+			logrus.WithError(err).Warnln("[Reload] GraphQL reload callback failed")
+		} else {
+			logrus.Warnln("[Reload] GraphQL reload callback succeeded")
+		}
 		return err
 	case <-ctx.Done():
+		logrus.WithError(ctx.Err()).Warnln("[Reload] GraphQL reload request canceled while waiting callback")
 		return ctx.Err()
 	}
 }
