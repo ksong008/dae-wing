@@ -26,6 +26,7 @@ import (
 	"github.com/daeuniverse/dae-wing/graphql/service/subscription"
 	"github.com/daeuniverse/dae/pkg/config_parser"
 	"github.com/graph-gophers/graphql-go"
+	"github.com/sirupsen/logrus"
 	"github.com/tidwall/sjson"
 )
 
@@ -256,6 +257,7 @@ func (r *MutationResolver) SelectConfig(args *struct {
 func (r *MutationResolver) Run(ctx context.Context, args *struct {
 	Dry bool
 }) (int32, error) {
+	logrus.WithField("dry", args.Dry).Warnln("[Reload] GraphQL run mutation invoked")
 	tx := db.BeginTx(ctx)
 	ret, err := config.Run(ctx, tx, args.Dry)
 	if err != nil {

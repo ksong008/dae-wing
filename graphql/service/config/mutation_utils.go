@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/daeuniverse/dae-wing/common"
 	"github.com/daeuniverse/dae-wing/dae"
@@ -288,7 +289,21 @@ func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
 }
 
 func Run(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error) {
+	runStartedAt := time.Now()
+	logrus.WithField("dry", noLoad).Warnln("[Reload] Config run started")
+	defer func() {
+		entry := logrus.WithFields(logrus.Fields{
+			"dry":      noLoad,
+			"duration": time.Since(runStartedAt),
+		})
+		if err != nil {
+			entry.WithError(err).Warnln("[Reload] Config run failed")
+			return
+		}
+		entry.Warnln("[Reload] Config run finished")
+	}()
 	if ok := runLock.TryLock(); !ok {
+		logrus.Warnln("[Reload] Config run skipped because another run is still active")
 		return 0, fmt.Errorf("the last request didn't complete; make a cup of tea and take a break")
 	}
 	defer runLock.Unlock()
