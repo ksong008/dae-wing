@@ -188,7 +188,6 @@ func restoreRunningState() (err error) {
 		tx2.Commit()
 		return err
 	}
-	tx.Commit()
 	return nil
 }
 
