@@ -169,11 +169,8 @@ func restoreRunningState() (err error) {
 	if !reload {
 		return nil
 	}
-	tx := db.BeginTx(context.TODO())
 	// Reload.
-	if _, err = config.Run(context.TODO(), tx, false); err != nil {
-		tx.Rollback()
-
+	if _, err = config.Run(context.TODO(), false); err != nil {
 		// Another tx.
 		// Set running = false.
 		tx2 := db.BeginTx(context.TODO())

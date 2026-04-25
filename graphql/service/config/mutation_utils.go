@@ -286,11 +286,28 @@ func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
 	}
 }
 
-func Run(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error) {
+func Run(ctx context.Context, noLoad bool) (n int32, err error) {
 	if ok := runLock.TryLock(); !ok {
 		return 0, fmt.Errorf("the last request didn't complete; make a cup of tea and take a break")
 	}
 	defer runLock.Unlock()
+
+	tx := db.BeginTx(ctx)
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	return runWithTx(ctx, tx, noLoad)
+}
+
+func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error) {
 	//// Dry run.
 	if noLoad {
 		err = reloadWithContext(ctx, dae.EmptyConfig)
