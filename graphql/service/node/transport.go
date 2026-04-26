@@ -23,10 +23,16 @@ func nodeTransport(protocol string, link string) *string {
 	switch strings.ToLower(protocol) {
 	case "vless":
 		if parsed, err := v2raydialer.ParseVlessURL(link); err == nil {
+			if !validV2RayLink(parsed) {
+				return nil
+			}
 			return transportLabel(parsed.Net, "tcp")
 		}
 	case "vmess":
 		if parsed, err := v2raydialer.ParseVmessURL(link); err == nil {
+			if !validV2RayLink(parsed) {
+				return nil
+			}
 			return transportLabel(parsed.Net, "tcp")
 		}
 	case "trojan", "trojan-go":
@@ -78,6 +84,15 @@ func nodeTransport(protocol string, link string) *string {
 	}
 
 	return nil
+}
+
+func validV2RayLink(parsed *v2raydialer.V2Ray) bool {
+	if parsed == nil {
+		return false
+	}
+	return strings.TrimSpace(parsed.Add) != "" &&
+		strings.TrimSpace(parsed.Port) != "" &&
+		strings.TrimSpace(parsed.ID) != ""
 }
 
 func transportLabel(raw string, fallback string) *string {
