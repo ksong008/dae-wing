@@ -15,7 +15,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/daeuniverse/dae-wing/common"
 	"github.com/daeuniverse/dae-wing/db"
+	"github.com/daeuniverse/dae-wing/defaults"
 	"github.com/daeuniverse/dae-wing/graphql/internal"
 	"github.com/daeuniverse/dae-wing/graphql/service/config"
 	"github.com/daeuniverse/dae-wing/graphql/service/config/global"
@@ -30,6 +32,34 @@ import (
 )
 
 type MutationResolver struct{}
+
+type DefaultResourcesResolver struct {
+	DefaultConfigIDV  uint
+	DefaultRoutingIDV uint
+	DefaultDNSIDV     uint
+	DefaultGroupIDV   uint
+	ModeV             string
+}
+
+func (r *DefaultResourcesResolver) DefaultConfigID() graphql.ID {
+	return common.EncodeCursor(r.DefaultConfigIDV)
+}
+
+func (r *DefaultResourcesResolver) DefaultRoutingID() graphql.ID {
+	return common.EncodeCursor(r.DefaultRoutingIDV)
+}
+
+func (r *DefaultResourcesResolver) DefaultDNSID() graphql.ID {
+	return common.EncodeCursor(r.DefaultDNSIDV)
+}
+
+func (r *DefaultResourcesResolver) DefaultGroupID() graphql.ID {
+	return common.EncodeCursor(r.DefaultGroupIDV)
+}
+
+func (r *DefaultResourcesResolver) Mode() string {
+	return r.ModeV
+}
 
 func (r *MutationResolver) CreateUser(args *struct {
 	Username string
@@ -462,6 +492,70 @@ func (r *MutationResolver) CreateGroup(args *struct {
 		policyParams = params
 	}
 	return group.Create(context.TODO(), args.Name, args.Policy, policyParams)
+}
+
+func (r *MutationResolver) EnsureDefaultResources(ctx context.Context, args *struct {
+	ConfigName   string
+	Global       global.Input
+	DnsName      string
+	Dns          string
+	RoutingName  string
+	Routing      string
+	GroupName    string
+	Policy       string
+	PolicyParams *[]struct {
+		Key *string
+		Val string
+	}
+	Mode string
+}) (*DefaultResourcesResolver, error) {
+	u, err := userFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	globalString, err := args.Global.Marshal()
+	if err != nil {
+		return nil, err
+	}
+
+	var policyParams []config_parser.Param
+	if args.PolicyParams != nil {
+		for _, p := range *args.PolicyParams {
+			var k string
+			if p.Key != nil {
+				k = *p.Key
+			}
+			policyParams = append(policyParams, config_parser.Param{
+				Key: k,
+				Val: p.Val,
+			})
+		}
+	}
+
+	result, err := defaults.Ensure(ctx, u.ID, defaults.EnsureInput{
+		ConfigName:   args.ConfigName,
+		Global:       globalString,
+		DnsName:      args.DnsName,
+		Dns:          args.Dns,
+		RoutingName:  args.RoutingName,
+		Routing:      args.Routing,
+		GroupName:    args.GroupName,
+		Policy:       args.Policy,
+		PolicyParams: policyParams,
+		Mode:         args.Mode,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &DefaultResourcesResolver{
+		DefaultConfigIDV:  result.DefaultConfigID,
+		DefaultRoutingIDV: result.DefaultRoutingID,
+		DefaultDNSIDV:     result.DefaultDNSID,
+		DefaultGroupIDV:   result.DefaultGroupID,
+		ModeV:             result.Mode,
+	}, nil
 }
 
 func (r *MutationResolver) GroupSetPolicy(args *struct {

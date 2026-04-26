@@ -134,6 +134,20 @@ type Mutation {
 	# createGroup is to create a group.
 	createGroup(name: String!, policy: Policy!, policyParams: [PolicyParam!]): Group! @hasRole(role: ADMIN)
 
+	# ensureDefaultResources creates missing default resources and persists their ids atomically.
+	ensureDefaultResources(
+		configName: String!
+		global: globalInput!
+		dnsName: String!
+		dns: String!
+		routingName: String!
+		routing: String!
+		groupName: String!
+		policy: Policy!
+		policyParams: [PolicyParam!]
+		mode: String!
+	): DefaultResources! @hasRole(role: ADMIN)
+
 	# groupSetPolicy is to set the group a new policy.
 	groupSetPolicy(id: ID!, policy: Policy!, policyParams: [PolicyParam!]): Int! @hasRole(role: ADMIN)
 
@@ -184,6 +198,13 @@ type ConfigFlatDesc {
 	required: Boolean!
 	type: String!
 	desc: String!
+}
+type DefaultResources {
+	defaultConfigID: ID!
+	defaultRoutingID: ID!
+	defaultDNSID: ID!
+	defaultGroupID: ID!
+	mode: String!
 }
 `
 
