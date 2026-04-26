@@ -62,10 +62,8 @@ func Update(ctx context.Context, _id graphql.ID, inputGlobal global.Input) (*Res
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	var m db.Config
@@ -110,10 +108,8 @@ func Remove(ctx context.Context, _id graphql.ID) (n int32, err error) {
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	m := db.Config{ID: id}
@@ -222,10 +218,8 @@ func Select(ctx context.Context, _id graphql.ID) (n int32, err error) {
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	// Unset all selected.
@@ -273,7 +267,7 @@ func reloadWithContext(ctx context.Context, cfg *daeConfig.Config) error {
 		return ctx.Err()
 	}
 
-	waitCtx, cancel := context.WithTimeout(context.Background(), reloadCallbackTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, reloadCallbackTimeout)
 	defer cancel()
 	select {
 	case err := <-chReloadCallback:
@@ -292,34 +286,55 @@ func Run(ctx context.Context, noLoad bool) (n int32, err error) {
 	}
 	defer runLock.Unlock()
 
-	tx := db.BeginTx(ctx)
+	state, err := prepareRunState(ctx, noLoad)
+	if err != nil {
+		return 0, err
+	}
+
+	if err = reloadWithContext(ctx, state.config); err != nil {
+		if noLoad {
+			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
+		}
+		return 0, fmt.Errorf("failed to load new config: %w; see more in log", err)
+	}
+
+	persistCtx := context.Background()
+	if ctx != nil {
+		persistCtx = context.WithoutCancel(ctx)
+	}
+	tx := db.BeginTx(persistCtx)
 	if tx.Error != nil {
 		return 0, tx.Error
 	}
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 
-	return runWithTx(ctx, tx, noLoad)
+	return state.persist(tx)
 }
 
-func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error) {
-	//// Dry run.
-	if noLoad {
-		err = reloadWithContext(ctx, dae.EmptyConfig)
-		if err != nil {
-			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
-		}
+type runState struct {
+	config                *daeConfig.Config
+	running               bool
+	runningConfigID       uint
+	runningConfigVersion  uint
+	runningDnsID          uint
+	runningDnsVersion     uint
+	runningRoutingID      uint
+	runningRoutingVersion uint
+	runningGroupVersion   uint
+	runningGroupIDs       []string
+	runningGroups         []db.Group
+}
 
-		// Running -> false
-		var sys db.System
-		if err = d.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
-			return 0, err
-		}
+func (s *runState) persist(d *gorm.DB) (n int32, err error) {
+	var sys db.System
+	if err = d.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
+		return 0, err
+	}
+	if !s.running {
 		if err = d.Model(&sys).Updates(map[string]interface{}{
 			"running": false,
 		}).Error; err != nil {
@@ -327,6 +342,47 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 		}
 		return 1, nil
 	}
+	if err = d.Model(&sys).Updates(map[string]interface{}{
+		"running":                   true,
+		"running_config_id":         s.runningConfigID,
+		"running_config_version":    s.runningConfigVersion,
+		"running_dns_id":            s.runningDnsID,
+		"running_dns_version":       s.runningDnsVersion,
+		"running_routing_id":        s.runningRoutingID,
+		"running_routing_version":   s.runningRoutingVersion,
+		"running_group_version_sum": s.runningGroupVersion,
+		"running_group_ids":         strings.Join(s.runningGroupIDs, ","),
+	}).Error; err != nil {
+		return 0, err
+	}
+	if err = d.Model(&sys).Association("RunningGroups").Replace(s.runningGroups); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+func prepareRunState(ctx context.Context, noLoad bool) (state *runState, err error) {
+	if noLoad {
+		return &runState{
+			config:  dae.EmptyConfig,
+			running: false,
+		}, nil
+	}
+
+	tx := db.BeginReadOnlyTx(ctx)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	defer func() {
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
+		}
+	}()
+
+	return prepareRunStateWithTx(tx)
+}
+
+func prepareRunStateWithTx(d *gorm.DB) (state *runState, err error) {
 
 	//// Run selected global+dns+routing.
 	/// Get them from database and parse them to daeConfig.
@@ -335,28 +391,28 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 	var mRouting db.Routing
 	q := d.Model(&db.Config{}).Where("selected = ?", true).First(&mConfig)
 	if (q.Error == nil && q.RowsAffected == 0) || errors.Is(q.Error, gorm.ErrRecordNotFound) {
-		return 0, fmt.Errorf("please select a config")
+		return nil, fmt.Errorf("please select a config")
 	}
 	if q.Error != nil {
-		return 0, q.Error
+		return nil, q.Error
 	}
 	q = d.Model(&db.Dns{}).Where("selected = ?", true).First(&mDns)
 	if (q.Error == nil && q.RowsAffected == 0) || errors.Is(q.Error, gorm.ErrRecordNotFound) {
-		return 0, fmt.Errorf("please select a dns")
+		return nil, fmt.Errorf("please select a dns")
 	}
 	if q.Error != nil {
-		return 0, q.Error
+		return nil, q.Error
 	}
 	q = d.Model(&db.Routing{}).Where("selected = ?", true).First(&mRouting)
 	if (q.Error == nil && q.RowsAffected == 0) || errors.Is(q.Error, gorm.ErrRecordNotFound) {
-		return 0, fmt.Errorf("please select a routing")
+		return nil, fmt.Errorf("please select a routing")
 	}
 	if q.Error != nil {
-		return 0, q.Error
+		return nil, q.Error
 	}
 	c, err := dae.ParseConfig(&mConfig.Global, &mDns.Dns, &mRouting.Routing)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	/// Fill in necessary groups and nodes.
 	// Find groups needed by routing.
@@ -370,7 +426,7 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 		Preload("SubscriptionBindings.Subscription.Node").
 		Find(&groups)
 	if q.Error != nil {
-		return 0, q.Error
+		return nil, q.Error
 	}
 
 	{
@@ -392,7 +448,7 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 			}
 		}
 		if len(notFound) > 0 {
-			return 0, fmt.Errorf("groups not defined but referenced by routing: %v", strings.Join(notFound, ", "))
+			return nil, fmt.Errorf("groups not defined but referenced by routing: %v", strings.Join(notFound, ", "))
 		}
 	}
 	// Find nodes in groups.
@@ -405,7 +461,7 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 				if binding.Subscription.Tag != nil && *binding.Subscription.Tag != "" {
 					subscriptionName = *binding.Subscription.Tag
 				}
-				return 0, fmt.Errorf("group '%v' has invalid subscription regex for '%v': %w", groups[i].Name, subscriptionName, err)
+				return nil, fmt.Errorf("group '%v' has invalid subscription regex for '%v': %w", groups[i].Name, subscriptionName, err)
 			}
 			for _, n := range matchedNodes {
 				n := n
@@ -419,7 +475,7 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 		if err = d.Model(groups[i]).
 			Association("Node").
 			Find(&solitaryNodes); err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, n := range solitaryNodes {
 			n := n
@@ -444,7 +500,7 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 	// Fill in group section.
 	for g, sNodes := range mGroupNode {
 		if len(sNodes) == 0 {
-			return 0, fmt.Errorf("please add at least one node into group '%v' (referenced by current routing '%v')", g.Name, mRouting.Name)
+			return nil, fmt.Errorf("please add at least one node into group '%v' (referenced by current routing '%v')", g.Name, mRouting.Name)
 		}
 		// Parse policy.
 		var policy daeConfig.FunctionListOrString
@@ -464,7 +520,7 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 		}
 		// fiexed group cannot have more than one node.
 		if g.Policy == "fixed" && len(sNodes) > 1 {
-			return 0, fmt.Errorf("group '%v' with policy 'fixed' cannot have more than one node", g.Name)
+			return nil, fmt.Errorf("group '%v' with policy 'fixed' cannot have more than one node", g.Name)
 		}
 		// Node names to filter.
 		var names []*config_parser.Param
@@ -493,17 +549,6 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 		c.Node = append(c.Node, daeConfig.KeyableString(fmt.Sprintf("%v:%v", node.uniqueName, node.dbNode.Link)))
 	}
 
-	/// Reload with current config.
-	errReload := reloadWithContext(ctx, c)
-	if errReload != nil {
-		return 0, fmt.Errorf("failed to load new config: %w; see more in log", errReload)
-	}
-
-	// Save running status
-	var sys db.System
-	if err = d.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
-		return 0, err
-	}
 	var gvs uint
 	var gids []string
 	for _, g := range groups {
@@ -513,22 +558,18 @@ func runWithTx(ctx context.Context, d *gorm.DB, noLoad bool) (n int32, err error
 	sort.Slice(gids, func(i, j int) bool {
 		return gids[i] < gids[j]
 	})
-	if err = d.Model(&sys).Updates(map[string]interface{}{
-		"running":                   true,
-		"running_config_id":         mConfig.ID,
-		"running_config_version":    mConfig.Version,
-		"running_dns_id":            mDns.ID,
-		"running_dns_version":       mDns.Version,
-		"running_routing_id":        mRouting.ID,
-		"running_routing_version":   mRouting.Version,
-		"running_group_version_sum": gvs,
-		"running_group_ids":         strings.Join(gids, ","),
-	}).Error; err != nil {
-		return 0, err
-	}
-	if err = d.Model(&sys).Association("RunningGroups").Replace(groups); err != nil {
-		return 0, err
-	}
 
-	return 1, nil
+	return &runState{
+		config:                c,
+		running:               true,
+		runningConfigID:       mConfig.ID,
+		runningConfigVersion:  mConfig.Version,
+		runningDnsID:          mDns.ID,
+		runningDnsVersion:     mDns.Version,
+		runningRoutingID:      mRouting.ID,
+		runningRoutingVersion: mRouting.Version,
+		runningGroupVersion:   gvs,
+		runningGroupIDs:       gids,
+		runningGroups:         groups,
+	}, nil
 }
