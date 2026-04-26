@@ -73,6 +73,18 @@ func (r *RuntimeOverviewResolver) UdpSessions() int32 {
 	return int32(r.Overview.UDPSessions)
 }
 
+func (r *RuntimeOverviewResolver) UdpTaskQueues() int32 {
+	return int32(r.Overview.UDPTaskQueues)
+}
+
+func (r *RuntimeOverviewResolver) UdpTaskDropTotal() string {
+	return strconv.FormatUint(r.Overview.UDPTaskDropTotal, 10)
+}
+
+func (r *RuntimeOverviewResolver) PacketSnifferSessions() int32 {
+	return int32(r.Overview.PacketSnifferSessions)
+}
+
 func (r *RuntimeOverviewResolver) RssBytes() string {
 	return strconv.FormatUint(r.Overview.RSSBytes, 10)
 }

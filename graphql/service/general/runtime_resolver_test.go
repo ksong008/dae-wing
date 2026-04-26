@@ -47,3 +47,25 @@ func TestNewRuntimeOverviewResolverHandlesEmptyOverview(t *testing.T) {
 		t.Fatalf("expected no sample resolvers, got %d", len(resolver.Samples()))
 	}
 }
+
+func TestRuntimeOverviewResolverRuntimeCapacityFields(t *testing.T) {
+	resolver := newRuntimeOverviewResolver(&dae.RuntimeOverview{
+		UDPSessions:           11,
+		UDPTaskQueues:         12,
+		UDPTaskDropTotal:      13,
+		PacketSnifferSessions: 14,
+	})
+
+	if got := resolver.UdpSessions(); got != 11 {
+		t.Fatalf("expected udp sessions 11, got %d", got)
+	}
+	if got := resolver.UdpTaskQueues(); got != 12 {
+		t.Fatalf("expected udp task queues 12, got %d", got)
+	}
+	if got := resolver.UdpTaskDropTotal(); got != "13" {
+		t.Fatalf("expected udp task drop total 13, got %s", got)
+	}
+	if got := resolver.PacketSnifferSessions(); got != 14 {
+		t.Fatalf("expected packet sniffer sessions 14, got %d", got)
+	}
+}

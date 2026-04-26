@@ -42,6 +42,9 @@ type RuntimeOverview {
   downloadTotal: String!
   activeConnections: Int!
   udpSessions: Int!
+  udpTaskQueues: Int!
+  udpTaskDropTotal: String!
+  packetSnifferSessions: Int!
   rssBytes: String!
   heapAllocBytes: String!
   goroutines: Int!
