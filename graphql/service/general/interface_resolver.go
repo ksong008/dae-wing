@@ -54,7 +54,7 @@ type flagResolver struct {
 }
 
 func (r *flagResolver) Up() bool {
-	return r.flags&unix.RTF_UP == unix.RTF_UP
+	return r.flags&net.FlagUp == net.FlagUp
 }
 
 type DefaultRoute struct {

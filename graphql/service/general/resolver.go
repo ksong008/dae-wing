@@ -7,9 +7,9 @@ package general
 
 import (
 	"context"
+	"net"
 
 	"github.com/vishvananda/netlink"
-	"golang.org/x/sys/unix"
 )
 
 type Resolver struct {
@@ -29,7 +29,7 @@ func (r *Resolver) Interfaces(args *struct {
 	}
 	for _, link := range linkList {
 		if args.Up != nil {
-			if (link.Attrs().Flags&unix.RTF_UP == unix.RTF_UP) != *args.Up {
+			if (link.Attrs().Flags&net.FlagUp == net.FlagUp) != *args.Up {
 				continue
 			}
 		}
