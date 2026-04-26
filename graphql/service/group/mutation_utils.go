@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
 	"github.com/daeuniverse/dae-wing/common"
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae/pkg/config_parser"
@@ -72,10 +73,8 @@ func Rename(ctx context.Context, _id graphql.ID, name string) (n int32, err erro
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	g := db.Group{ID: id}
@@ -103,10 +102,8 @@ func Remove(ctx context.Context, _id graphql.ID) (n int32, err error) {
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	g := db.Group{ID: id}
@@ -154,10 +151,8 @@ func AddSubscriptions(ctx context.Context, _id graphql.ID, _subscriptionIds []gr
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	if len(bindings) > 0 {
@@ -188,10 +183,8 @@ func DelSubscriptions(ctx context.Context, _id graphql.ID, _subscriptionIds []gr
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	if err = tx.Where("group_id = ? AND subscription_id in ?", id, subscriptionIds).
@@ -220,10 +213,8 @@ func AddNodes(ctx context.Context, _id graphql.ID, _nodeIds []graphql.ID) (int32
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	if err = tx.Model(&db.Group{ID: id}).
@@ -253,10 +244,8 @@ func DelNodes(ctx context.Context, _id graphql.ID, _nodeIds []graphql.ID) (int32
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	if err = tx.Model(&db.Group{ID: id}).
@@ -278,10 +267,8 @@ func SetPolicy(ctx context.Context, _id graphql.ID, policy string, policyParams 
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	q := tx.Model(&db.Group{ID: id}).Update("policy", policy)

@@ -46,10 +46,8 @@ func Update(ctx context.Context, _id graphql.ID, dns string) (*Resolver, error) 
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	var m db.Dns
@@ -83,10 +81,8 @@ func Remove(ctx context.Context, _id graphql.ID) (n int32, err error) {
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	m := db.Dns{ID: id}
@@ -106,10 +102,8 @@ func Select(ctx context.Context, _id graphql.ID) (n int32, err error) {
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	// Unset all selected.

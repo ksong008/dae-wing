@@ -182,8 +182,8 @@ func UpdateAll(ctx context.Context) {
 		logrus.Error(err)
 		return
 	}
-	for _, sub := range subs {
-		AddUpdateScheduler(ctx, sub.ID)
+	for i := range subs {
+		addUpdateScheduler(&subs[i])
 	}
 }
 
@@ -193,6 +193,10 @@ func AddUpdateScheduler(ctx context.Context, id uint) {
 		logrus.Error(err)
 		return
 	}
+	addUpdateScheduler(&sub)
+}
+
+func addUpdateScheduler(sub *db.Subscription) {
 	if !sub.CronEnable {
 		return
 	}
@@ -271,10 +275,8 @@ func UpdateById(ctx context.Context, subId uint) (sub *db.Subscription, err erro
 
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	// Remove those nodes whose subscription are independent from any groups.
@@ -329,11 +331,13 @@ func Remove(ctx context.Context, _ids []graphql.ID) (n int32, err error) {
 		return 0, err
 	}
 	tx := db.BeginTx(ctx)
+	committed := false
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if committed {
+			return
+		}
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	var nodes []db.Node
@@ -370,6 +374,13 @@ func Remove(ctx context.Context, _ids []graphql.ID) (n int32, err error) {
 		return 0, q.Error
 	}
 
+	finishErr := db.FinishTx(tx, nil)
+	committed = true
+	if finishErr != nil {
+		err = finishErr
+		return 0, err
+	}
+
 	for _, id := range ids {
 		RemoveUpdateScheduler(id)
 	}
@@ -402,10 +413,8 @@ func UpdateLink(ctx context.Context, _id graphql.ID, link string) (r *Resolver, 
 
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 
@@ -449,11 +458,13 @@ func UpdateCron(ctx context.Context, _id graphql.ID, cronExp string, cronEnable 
 	}
 
 	tx := db.BeginTx(ctx)
+	committed := false
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if committed {
+			return
+		}
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 
@@ -472,10 +483,16 @@ func UpdateCron(ctx context.Context, _id graphql.ID, cronExp string, cronEnable 
 		return nil, err
 	}
 
-	// Update scheduler
+	finishErr := db.FinishTx(tx, nil)
+	committed = true
+	if finishErr != nil {
+		err = finishErr
+		return nil, err
+	}
+
 	RemoveUpdateScheduler(id)
-	if cronEnable {
-		AddUpdateScheduler(ctx, id)
+	if m.CronEnable {
+		addUpdateScheduler(&m)
 	}
 
 	return &Resolver{Subscription: &m}, nil

@@ -129,10 +129,8 @@ func Remove(ctx context.Context, _ids []graphql.ID) (n int32, err error) {
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 
