@@ -319,15 +319,15 @@ func (r *queryResolver) Subscriptions(args *struct{ ID *graphql.ID }) (rs []*sub
 
 func (r *queryResolver) Group(args *struct{ Name string }) (rs *group.Resolver, err error) {
 	var m db.Group
-	if err = db.DB(context.TODO()).
+	if err = preloadGroupQuery(db.DB(context.TODO())).
 		Model(&db.Group{}).
 		Where("name = ?", args.Name).First(&m).Error; err != nil {
 		return nil, err
 	}
-	return &group.Resolver{Group: &m}, nil
+	return group.NewPreloadedResolver(&m), nil
 }
 func (r *queryResolver) Groups(args *struct{ ID *graphql.ID }) (rs []*group.Resolver, err error) {
-	q := db.DB(context.TODO()).
+	q := preloadGroupQuery(db.DB(context.TODO())).
 		Model(&db.Group{})
 	if args.ID != nil {
 		id, err := common.DecodeCursor(*args.ID)
@@ -345,11 +345,18 @@ func (r *queryResolver) Groups(args *struct{ ID *graphql.ID }) (rs []*group.Reso
 	}
 	for _, _m := range models {
 		m := _m
-		rs = append(rs, &group.Resolver{
-			Group: &m,
-		})
+		rs = append(rs, group.NewPreloadedResolver(&m))
 	}
 	return rs, nil
+}
+
+func preloadGroupQuery(q *gorm.DB) *gorm.DB {
+	return q.
+		Preload("Node").
+		Preload("PolicyParams").
+		Preload("SubscriptionBindings").
+		Preload("SubscriptionBindings.Subscription").
+		Preload("SubscriptionBindings.Subscription.Node")
 }
 func (r *queryResolver) Nodes(args *struct {
 	ID             *graphql.ID

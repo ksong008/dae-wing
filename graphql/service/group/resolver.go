@@ -3,6 +3,8 @@ package group
 import (
 	"context"
 	"regexp"
+	"sync"
+
 	"github.com/daeuniverse/dae-wing/common"
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/graphql/internal"
@@ -13,10 +15,30 @@ import (
 
 type Resolver struct {
 	*db.Group
+	nodesLoaded         bool
+	subscriptionsLoaded bool
+	policyParamsLoaded  bool
 }
 
 type SubscriptionBindingResolver struct {
 	*db.GroupSubscription
+	matchedNodesOnce sync.Once
+	matchedNodes     []*node.Resolver
+	matchedCount     int32
+	matchedErr       error
+}
+
+func NewResolver(group *db.Group) *Resolver {
+	return &Resolver{Group: group}
+}
+
+func NewPreloadedResolver(group *db.Group) *Resolver {
+	return &Resolver{
+		Group:               group,
+		nodesLoaded:         true,
+		subscriptionsLoaded: true,
+		policyParamsLoaded:  true,
+	}
 }
 
 func (r *Resolver) ID() graphql.ID {
@@ -28,12 +50,14 @@ func (r *Resolver) Name() string {
 }
 
 func (r *Resolver) Nodes() (rs []*node.Resolver, err error) {
-	var nodes []db.Node
-	if err = db.DB(context.TODO()).Model(r.Group).Association("Node").Find(&nodes); err != nil {
-		return nil, err
+	nodes := r.Group.Node
+	if !r.nodesLoaded {
+		if err = db.DB(context.TODO()).Model(r.Group).Association("Node").Find(&nodes); err != nil {
+			return nil, err
+		}
 	}
-	for _, _n := range nodes {
-		n := _n
+	for i := range nodes {
+		n := nodes[i]
 		rs = append(rs, &node.Resolver{Node: &n})
 	}
 	return rs, nil
@@ -60,16 +84,18 @@ func matchedNodesForBinding(binding *db.GroupSubscription) ([]db.Node, error) {
 }
 
 func (r *Resolver) Subscriptions() (rs []*SubscriptionBindingResolver, err error) {
-	var bindings []db.GroupSubscription
-	if err = db.DB(context.TODO()).
-		Where("group_id = ?", r.Group.ID).
-		Preload("Subscription").
-		Preload("Subscription.Node").
-		Find(&bindings).Error; err != nil {
-		return nil, err
+	bindings := r.Group.SubscriptionBindings
+	if !r.subscriptionsLoaded {
+		if err = db.DB(context.TODO()).
+			Where("group_id = ?", r.Group.ID).
+			Preload("Subscription").
+			Preload("Subscription.Node").
+			Find(&bindings).Error; err != nil {
+			return nil, err
+		}
 	}
-	for _, _binding := range bindings {
-		binding := _binding
+	for i := range bindings {
+		binding := bindings[i]
 		rs = append(rs, &SubscriptionBindingResolver{GroupSubscription: &binding})
 	}
 	return rs, nil
@@ -80,12 +106,14 @@ func (r *Resolver) Policy() string {
 }
 
 func (r *Resolver) PolicyParams() (rs []*internal.ParamResolver, err error) {
-	var params []db.GroupPolicyParam
-	if err = db.DB(context.TODO()).Model(r.Group).Association("PolicyParams").Find(&params); err != nil {
-		return nil, err
+	params := r.Group.PolicyParams
+	if !r.policyParamsLoaded {
+		if err = db.DB(context.TODO()).Model(r.Group).Association("PolicyParams").Find(&params); err != nil {
+			return nil, err
+		}
 	}
-	for _, param := range params {
-		rs = append(rs, &internal.ParamResolver{Param: param.Marshal()})
+	for i := range params {
+		rs = append(rs, &internal.ParamResolver{Param: params[i].Marshal()})
 	}
 	return rs, nil
 }
@@ -99,22 +127,33 @@ func (r *SubscriptionBindingResolver) NameFilterRegex() *string {
 	return r.GroupSubscription.NameFilterRegex
 }
 
+func (r *SubscriptionBindingResolver) loadMatchedNodes() error {
+	r.matchedNodesOnce.Do(func() {
+		matched, err := matchedNodesForBinding(r.GroupSubscription)
+		if err != nil {
+			r.matchedErr = err
+			return
+		}
+		r.matchedCount = int32(len(matched))
+		r.matchedNodes = make([]*node.Resolver, 0, len(matched))
+		for i := range matched {
+			n := matched[i]
+			r.matchedNodes = append(r.matchedNodes, &node.Resolver{Node: &n})
+		}
+	})
+	return r.matchedErr
+}
+
 func (r *SubscriptionBindingResolver) MatchedNodes() (rs []*node.Resolver, err error) {
-	matched, err := matchedNodesForBinding(r.GroupSubscription)
-	if err != nil {
+	if err = r.loadMatchedNodes(); err != nil {
 		return nil, err
 	}
-	for _, _node := range matched {
-		n := _node
-		rs = append(rs, &node.Resolver{Node: &n})
-	}
-	return rs, nil
+	return r.matchedNodes, nil
 }
 
 func (r *SubscriptionBindingResolver) MatchedCount() (int32, error) {
-	matched, err := matchedNodesForBinding(r.GroupSubscription)
-	if err != nil {
+	if err := r.loadMatchedNodes(); err != nil {
 		return 0, err
 	}
-	return int32(len(matched)), nil
+	return r.matchedCount, nil
 }
