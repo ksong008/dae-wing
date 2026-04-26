@@ -61,19 +61,17 @@ func (r *DefaultResourcesResolver) Mode() string {
 	return r.ModeV
 }
 
-func (r *MutationResolver) CreateUser(args *struct {
+func (r *MutationResolver) CreateUser(ctx context.Context, args *struct {
 	Username string
 	Password string
 }) (token string, err error) {
 	if len(args.Password) < 6 || strings.IndexFunc(args.Password, unicode.IsLetter) < 0 || strings.IndexFunc(args.Password, unicode.IsNumber) < 0 {
 		return "", fmt.Errorf("too weak password; should contain numbers and letters, and no less than 6 in length")
 	}
-	tx := db.BeginTx(context.TODO())
+	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	// Check if there is already a user.
@@ -122,7 +120,7 @@ func (r *MutationResolver) SetJsonStorage(ctx context.Context, args *struct {
 			return 0, err
 		}
 	}
-	if err = db.DB(context.TODO()).Model(&u).Update("json_storage", u.JsonStorage).Error; err != nil {
+	if err = db.DB(ctx).Model(&u).Update("json_storage", u.JsonStorage).Error; err != nil {
 		return 0, err
 	}
 	return int32(len(args.Paths)), nil
@@ -146,7 +144,7 @@ func (r *MutationResolver) RemoveJsonStorage(ctx context.Context, args *struct {
 		}
 		n = int32(len(*args.Paths))
 	}
-	if err = db.DB(context.TODO()).Model(&u).Update("json_storage", u.JsonStorage).Error; err != nil {
+	if err = db.DB(ctx).Model(&u).Update("json_storage", u.JsonStorage).Error; err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -158,7 +156,7 @@ func (r *MutationResolver) UpdateAvatar(ctx context.Context, args *struct {
 	if err != nil {
 		return 0, err
 	}
-	q := db.DB(context.TODO()).Model(&u).Update("avatar", args.Avatar)
+	q := db.DB(ctx).Model(&u).Update("avatar", args.Avatar)
 	if err = q.Error; err != nil {
 		return 0, err
 	}
@@ -171,7 +169,7 @@ func (r *MutationResolver) UpdateName(ctx context.Context, args *struct {
 	if err != nil {
 		return 0, err
 	}
-	q := db.DB(context.TODO()).Model(&u).Update("name", args.Name)
+	q := db.DB(ctx).Model(&u).Update("name", args.Name)
 	if err = q.Error; err != nil {
 		return 0, err
 	}
@@ -184,7 +182,7 @@ func (r *MutationResolver) UpdateUsername(ctx context.Context, args *struct {
 	if err != nil {
 		return 0, err
 	}
-	q := db.DB(context.TODO()).Model(&u).Update("username", args.Username)
+	q := db.DB(ctx).Model(&u).Update("username", args.Username)
 	if err = q.Error; err != nil {
 		return 0, err
 	}
@@ -218,10 +216,8 @@ func UpdatePassword(ctx context.Context, args *struct {
 	}
 	tx := db.BeginTx(ctx)
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
+		if finishErr := db.FinishTx(tx, err); finishErr != nil {
+			err = finishErr
 		}
 	}()
 	q := tx.Model(u).Updates(db.User{
@@ -246,7 +242,7 @@ func (r *MutationResolver) UpdatePassword(ctx context.Context, args *struct {
 	}
 	return UpdatePassword(ctx, args, u, false)
 }
-func (r *MutationResolver) CreateConfig(args *struct {
+func (r *MutationResolver) CreateConfig(ctx context.Context, args *struct {
 	Name   *string
 	Global *global.Input
 }) (c *config.Resolver, err error) {
@@ -254,33 +250,33 @@ func (r *MutationResolver) CreateConfig(args *struct {
 	if args.Name != nil {
 		strName = *args.Name
 	}
-	return config.Create(context.TODO(), strName, args.Global)
+	return config.Create(ctx, strName, args.Global)
 }
 
-func (r *MutationResolver) UpdateConfig(args *struct {
+func (r *MutationResolver) UpdateConfig(ctx context.Context, args *struct {
 	ID     graphql.ID
 	Global global.Input
 }) (*config.Resolver, error) {
-	return config.Update(context.TODO(), args.ID, args.Global)
+	return config.Update(ctx, args.ID, args.Global)
 }
 
-func (r *MutationResolver) RenameConfig(args *struct {
+func (r *MutationResolver) RenameConfig(ctx context.Context, args *struct {
 	ID   graphql.ID
 	Name string
 }) (int32, error) {
-	return config.Rename(context.TODO(), args.ID, args.Name)
+	return config.Rename(ctx, args.ID, args.Name)
 }
 
-func (r *MutationResolver) RemoveConfig(args *struct {
+func (r *MutationResolver) RemoveConfig(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (int32, error) {
-	return config.Remove(context.TODO(), args.ID)
+	return config.Remove(ctx, args.ID)
 }
 
-func (r *MutationResolver) SelectConfig(args *struct {
+func (r *MutationResolver) SelectConfig(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (int32, error) {
-	return config.Select(context.TODO(), args.ID)
+	return config.Select(ctx, args.ID)
 }
 
 func (r *MutationResolver) Run(ctx context.Context, args *struct {
@@ -289,7 +285,7 @@ func (r *MutationResolver) Run(ctx context.Context, args *struct {
 	return config.Run(ctx, args.Dry)
 }
 
-func (r *MutationResolver) CreateDns(args *struct {
+func (r *MutationResolver) CreateDns(ctx context.Context, args *struct {
 	Name *string
 	Dns  *string
 }) (c *dns.Resolver, err error) {
@@ -300,36 +296,36 @@ func (r *MutationResolver) CreateDns(args *struct {
 	if args.Name != nil {
 		strName = *args.Name
 	}
-	return dns.Create(context.TODO(), strName, strDns)
+	return dns.Create(ctx, strName, strDns)
 }
 
-func (r *MutationResolver) UpdateDns(args *struct {
+func (r *MutationResolver) UpdateDns(ctx context.Context, args *struct {
 	ID  graphql.ID
 	Dns string
 }) (*dns.Resolver, error) {
-	return dns.Update(context.TODO(), args.ID, args.Dns)
+	return dns.Update(ctx, args.ID, args.Dns)
 }
 
-func (r *MutationResolver) RenameDns(args *struct {
+func (r *MutationResolver) RenameDns(ctx context.Context, args *struct {
 	ID   graphql.ID
 	Name string
 }) (int32, error) {
-	return dns.Rename(context.TODO(), args.ID, args.Name)
+	return dns.Rename(ctx, args.ID, args.Name)
 }
 
-func (r *MutationResolver) RemoveDns(args *struct {
+func (r *MutationResolver) RemoveDns(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (int32, error) {
-	return dns.Remove(context.TODO(), args.ID)
+	return dns.Remove(ctx, args.ID)
 }
 
-func (r *MutationResolver) SelectDns(args *struct {
+func (r *MutationResolver) SelectDns(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (int32, error) {
-	return dns.Select(context.TODO(), args.ID)
+	return dns.Select(ctx, args.ID)
 }
 
-func (r *MutationResolver) CreateRouting(args *struct {
+func (r *MutationResolver) CreateRouting(ctx context.Context, args *struct {
 	Name    *string
 	Routing *string
 }) (c *routing.Resolver, err error) {
@@ -340,134 +336,128 @@ func (r *MutationResolver) CreateRouting(args *struct {
 	if args.Name != nil {
 		strName = *args.Name
 	}
-	return routing.Create(context.TODO(), strName, strRouting)
+	return routing.Create(ctx, strName, strRouting)
 }
 
-func (r *MutationResolver) UpdateRouting(args *struct {
+func (r *MutationResolver) UpdateRouting(ctx context.Context, args *struct {
 	ID      graphql.ID
 	Routing string
 }) (*routing.Resolver, error) {
-	return routing.Update(context.TODO(), args.ID, args.Routing)
+	return routing.Update(ctx, args.ID, args.Routing)
 }
 
-func (r *MutationResolver) RenameRouting(args *struct {
+func (r *MutationResolver) RenameRouting(ctx context.Context, args *struct {
 	ID   graphql.ID
 	Name string
 }) (int32, error) {
-	return routing.Rename(context.TODO(), args.ID, args.Name)
+	return routing.Rename(ctx, args.ID, args.Name)
 }
 
-func (r *MutationResolver) RemoveRouting(args *struct {
+func (r *MutationResolver) RemoveRouting(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (int32, error) {
-	return routing.Remove(context.TODO(), args.ID)
+	return routing.Remove(ctx, args.ID)
 }
 
-func (r *MutationResolver) SelectRouting(args *struct {
+func (r *MutationResolver) SelectRouting(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (int32, error) {
-	return routing.Select(context.TODO(), args.ID)
+	return routing.Select(ctx, args.ID)
 }
 
-func (r *MutationResolver) ImportNodes(args *struct {
+func (r *MutationResolver) ImportNodes(ctx context.Context, args *struct {
 	RollbackError bool
 	Args          []*internal.ImportArgument
 }) ([]*node.ImportResult, error) {
-	tx := db.BeginTx(context.TODO())
+	tx := db.BeginTx(ctx)
 	result, err := node.Import(tx, args.RollbackError, nil, args.Args)
-	if err != nil {
-		tx.Rollback()
-		return nil, err
+	if finishErr := db.FinishTx(tx, err); finishErr != nil {
+		return nil, finishErr
 	}
-	tx.Commit()
 	return result, nil
 }
 
-func (r *MutationResolver) UpdateNode(args *struct {
+func (r *MutationResolver) UpdateNode(ctx context.Context, args *struct {
 	ID      graphql.ID
 	NewLink string
 }) (*node.Resolver, error) {
-	tx := db.BeginTx(context.TODO())
+	tx := db.BeginTx(ctx)
 	result, err := node.Update(tx, args.ID, args.NewLink)
-	if err != nil {
-		tx.Rollback()
-		return nil, err
+	if finishErr := db.FinishTx(tx, err); finishErr != nil {
+		return nil, finishErr
 	}
-	tx.Commit()
 	return result, nil
 }
 
-func (r *MutationResolver) TestNodeLatencies(args *struct {
+func (r *MutationResolver) TestNodeLatencies(ctx context.Context, args *struct {
 	IDs *[]graphql.ID
 }) ([]*node.LatencyResolver, error) {
-	return node.TestLatencies(context.TODO(), args.IDs)
+	return node.TestLatencies(ctx, args.IDs)
 }
 
-func (r *MutationResolver) RemoveNodes(args *struct {
+func (r *MutationResolver) RemoveNodes(ctx context.Context, args *struct {
 	IDs []graphql.ID
 }) (int32, error) {
-	return node.Remove(context.TODO(), args.IDs)
+	return node.Remove(ctx, args.IDs)
 }
 
-func (r *MutationResolver) TagNode(args *struct {
+func (r *MutationResolver) TagNode(ctx context.Context, args *struct {
 	ID  graphql.ID
 	Tag string
 }) (int32, error) {
-	return node.Tag(context.TODO(), args.ID, args.Tag)
+	return node.Tag(ctx, args.ID, args.Tag)
 }
 
-func (r *MutationResolver) ImportSubscription(args *struct {
+func (r *MutationResolver) ImportSubscription(ctx context.Context, args *struct {
 	RollbackError bool
 	Arg           internal.ImportArgument
 }) (*subscription.ImportResult, error) {
-	tx := db.BeginTx(context.TODO())
+	tx := db.BeginTx(ctx)
 	result, err := subscription.Import(tx, args.RollbackError, &args.Arg)
-	if err != nil {
-		tx.Rollback()
-		return nil, err
+	if finishErr := db.FinishTx(tx, err); finishErr != nil {
+		return nil, finishErr
 	}
-	tx.Commit()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	schedulerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	subscription.UpdateAll(ctx)
+	subscription.UpdateAll(schedulerCtx)
 	return result, nil
 }
 
-func (r *MutationResolver) UpdateSubscription(args *struct {
+func (r *MutationResolver) UpdateSubscription(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (*subscription.Resolver, error) {
-	return subscription.Update(context.TODO(), args.ID)
+	return subscription.Update(ctx, args.ID)
 }
 
-func (r *MutationResolver) UpdateSubscriptionLink(args *struct {
+func (r *MutationResolver) UpdateSubscriptionLink(ctx context.Context, args *struct {
 	ID   graphql.ID
 	Link string
 }) (*subscription.Resolver, error) {
-	return subscription.UpdateLink(context.TODO(), args.ID, args.Link)
+	return subscription.UpdateLink(ctx, args.ID, args.Link)
 }
 
-func (r *MutationResolver) UpdateSubscriptionCron(args *struct {
+func (r *MutationResolver) UpdateSubscriptionCron(ctx context.Context, args *struct {
 	ID         graphql.ID
 	CronExp    string
 	CronEnable bool
 }) (*subscription.Resolver, error) {
-	return subscription.UpdateCron(context.TODO(), args.ID, args.CronExp, args.CronEnable)
+	return subscription.UpdateCron(ctx, args.ID, args.CronExp, args.CronEnable)
 }
 
-func (r *MutationResolver) RemoveSubscriptions(args *struct {
+func (r *MutationResolver) RemoveSubscriptions(ctx context.Context, args *struct {
 	IDs []graphql.ID
 }) (int32, error) {
-	return subscription.Remove(context.TODO(), args.IDs)
+	return subscription.Remove(ctx, args.IDs)
 }
 
-func (r *MutationResolver) TagSubscription(args *struct {
+func (r *MutationResolver) TagSubscription(ctx context.Context, args *struct {
 	ID  graphql.ID
 	Tag string
 }) (int32, error) {
-	return subscription.Tag(context.TODO(), args.ID, args.Tag)
+	return subscription.Tag(ctx, args.ID, args.Tag)
 }
 
-func (r *MutationResolver) CreateGroup(args *struct {
+func (r *MutationResolver) CreateGroup(ctx context.Context, args *struct {
 	Name         string
 	Policy       string
 	PolicyParams *[]struct {
@@ -491,7 +481,7 @@ func (r *MutationResolver) CreateGroup(args *struct {
 		}
 		policyParams = params
 	}
-	return group.Create(context.TODO(), args.Name, args.Policy, policyParams)
+	return group.Create(ctx, args.Name, args.Policy, policyParams)
 }
 
 func (r *MutationResolver) EnsureDefaultResources(ctx context.Context, args *struct {
@@ -558,7 +548,7 @@ func (r *MutationResolver) EnsureDefaultResources(ctx context.Context, args *str
 	}, nil
 }
 
-func (r *MutationResolver) GroupSetPolicy(args *struct {
+func (r *MutationResolver) GroupSetPolicy(ctx context.Context, args *struct {
 	ID           graphql.ID
 	Policy       string
 	PolicyParams *[]struct {
@@ -582,47 +572,47 @@ func (r *MutationResolver) GroupSetPolicy(args *struct {
 		}
 		policyParams = params
 	}
-	return group.SetPolicy(context.TODO(), args.ID, args.Policy, policyParams)
+	return group.SetPolicy(ctx, args.ID, args.Policy, policyParams)
 }
 
-func (r *MutationResolver) RemoveGroup(args *struct {
+func (r *MutationResolver) RemoveGroup(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (int32, error) {
-	return group.Remove(context.TODO(), args.ID)
+	return group.Remove(ctx, args.ID)
 }
 
-func (r *MutationResolver) RenameGroup(args *struct {
+func (r *MutationResolver) RenameGroup(ctx context.Context, args *struct {
 	ID   graphql.ID
 	Name string
 }) (int32, error) {
-	return group.Rename(context.TODO(), args.ID, args.Name)
+	return group.Rename(ctx, args.ID, args.Name)
 }
 
-func (r *MutationResolver) GroupAddSubscriptions(args *struct {
+func (r *MutationResolver) GroupAddSubscriptions(ctx context.Context, args *struct {
 	ID              graphql.ID
 	SubscriptionIDs []graphql.ID
 	NameFilterRegex *string
 }) (int32, error) {
-	return group.AddSubscriptions(context.TODO(), args.ID, args.SubscriptionIDs, args.NameFilterRegex)
+	return group.AddSubscriptions(ctx, args.ID, args.SubscriptionIDs, args.NameFilterRegex)
 }
 
-func (r *MutationResolver) GroupDelSubscriptions(args *struct {
+func (r *MutationResolver) GroupDelSubscriptions(ctx context.Context, args *struct {
 	ID              graphql.ID
 	SubscriptionIDs []graphql.ID
 }) (int32, error) {
-	return group.DelSubscriptions(context.TODO(), args.ID, args.SubscriptionIDs)
+	return group.DelSubscriptions(ctx, args.ID, args.SubscriptionIDs)
 }
 
-func (r *MutationResolver) GroupAddNodes(args *struct {
+func (r *MutationResolver) GroupAddNodes(ctx context.Context, args *struct {
 	ID      graphql.ID
 	NodeIDs []graphql.ID
 }) (int32, error) {
-	return group.AddNodes(context.TODO(), args.ID, args.NodeIDs)
+	return group.AddNodes(ctx, args.ID, args.NodeIDs)
 }
 
-func (r *MutationResolver) GroupDelNodes(args *struct {
+func (r *MutationResolver) GroupDelNodes(ctx context.Context, args *struct {
 	ID      graphql.ID
 	NodeIDs []graphql.ID
 }) (int32, error) {
-	return group.DelNodes(context.TODO(), args.ID, args.NodeIDs)
+	return group.DelNodes(ctx, args.ID, args.NodeIDs)
 }

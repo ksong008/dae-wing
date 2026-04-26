@@ -65,6 +65,7 @@ var (
 		Use:   "run",
 		Short: "Run " + db.AppName + " in the foreground",
 		Run: func(cmd *cobra.Command, args []string) {
+			runCtx := cmd.Context()
 			if cfgDir == "" {
 				logrus.Fatalln("Argument \"--config\" or \"-c\" is required but not provided.")
 			}
@@ -82,7 +83,7 @@ var (
 				logrus.Fatalln("Failed to init db:", err)
 			}
 
-			subscription.UpdateAll(context.TODO())
+			subscription.UpdateAll(runCtx)
 
 			// Run dae.
 			var logOpts *lumberjack.Logger
@@ -109,7 +110,7 @@ var (
 					logrus.Fatalln("dae.Run:", err)
 				}
 			}()
-			if err := restoreRunningState(); err != nil {
+			if err := restoreRunningState(runCtx); err != nil {
 				logrus.Warnln("Failed to restore last running state:", err)
 			}
 			// ListenAndServe GraphQL.
@@ -158,8 +159,8 @@ var (
 	}
 )
 
-func restoreRunningState() (err error) {
-	reload, err := shouldReload()
+func restoreRunningState(ctx context.Context) (err error) {
+	reload, err := shouldReload(ctx)
 	if err != nil {
 		return err
 	}
@@ -167,10 +168,10 @@ func restoreRunningState() (err error) {
 		return nil
 	}
 	// Reload.
-	if _, err = config.Run(context.TODO(), false); err != nil {
+	if _, err = config.Run(ctx, false); err != nil {
 		// Another tx.
 		// Set running = false.
-		tx2 := db.BeginTx(context.TODO())
+		tx2 := db.BeginTx(ctx)
 		var sys db.System
 		if err2 := tx2.Model(&sys).Select("id").First(&sys).Error; err2 != nil {
 			tx2.Rollback()
@@ -190,16 +191,16 @@ func restoreRunningState() (err error) {
 	return nil
 }
 
-func shouldReload() (ok bool, err error) {
+func shouldReload(ctx context.Context) (ok bool, err error) {
 	var sys db.System
-	if err := db.DB(context.TODO()).Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
+	if err := db.DB(ctx).Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
 		return false, err
 	}
 	if !sys.Running {
 		return false, nil
 	}
 	var m db.Config
-	q := db.DB(context.TODO()).Model(&db.Config{}).
+	q := db.DB(ctx).Model(&db.Config{}).
 		Where("selected = ?", true).
 		First(&m)
 	if q.Error != nil {
@@ -208,7 +209,7 @@ func shouldReload() (ok bool, err error) {
 	if q.RowsAffected == 0 {
 		// Data inconsistency.
 		logrus.Warnln("Data inconsistency detected: no selected config but last state is running")
-		_ = db.DB(context.TODO()).Model(&sys).Update("running", false).Error
+		_ = db.DB(ctx).Model(&sys).Update("running", false).Error
 		return false, nil
 	}
 	return true, nil

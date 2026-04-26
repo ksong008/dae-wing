@@ -6,6 +6,8 @@
 package subscription
 
 import (
+	"context"
+
 	"github.com/daeuniverse/dae-wing/common"
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/graphql/service/node"
@@ -42,10 +44,10 @@ func (r *Resolver) Status() string {
 func (r *Resolver) Info() string {
 	return r.Subscription.Info
 }
-func (r *Resolver) Nodes(args *struct {
+func (r *Resolver) Nodes(ctx context.Context, args *struct {
 	First *int32
 	After *graphql.ID
 }) (*node.ConnectionResolver, error) {
 	id := common.EncodeCursor(r.Subscription.ID)
-	return node.NewConnectionResolver(nil, &id, args.First, args.After)
+	return node.NewConnectionResolver(ctx, nil, &id, args.First, args.After)
 }

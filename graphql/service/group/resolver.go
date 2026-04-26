@@ -49,10 +49,10 @@ func (r *Resolver) Name() string {
 	return r.Group.Name
 }
 
-func (r *Resolver) Nodes() (rs []*node.Resolver, err error) {
+func (r *Resolver) Nodes(ctx context.Context) (rs []*node.Resolver, err error) {
 	nodes := r.Group.Node
 	if !r.nodesLoaded {
-		if err = db.DB(context.TODO()).Model(r.Group).Association("Node").Find(&nodes); err != nil {
+		if err = db.DB(ctx).Model(r.Group).Association("Node").Find(&nodes); err != nil {
 			return nil, err
 		}
 	}
@@ -83,10 +83,10 @@ func matchedNodesForBinding(binding *db.GroupSubscription) ([]db.Node, error) {
 	return matched, nil
 }
 
-func (r *Resolver) Subscriptions() (rs []*SubscriptionBindingResolver, err error) {
+func (r *Resolver) Subscriptions(ctx context.Context) (rs []*SubscriptionBindingResolver, err error) {
 	bindings := r.Group.SubscriptionBindings
 	if !r.subscriptionsLoaded {
-		if err = db.DB(context.TODO()).
+		if err = db.DB(ctx).
 			Where("group_id = ?", r.Group.ID).
 			Preload("Subscription").
 			Preload("Subscription.Node").
@@ -105,10 +105,10 @@ func (r *Resolver) Policy() string {
 	return r.Group.Policy
 }
 
-func (r *Resolver) PolicyParams() (rs []*internal.ParamResolver, err error) {
+func (r *Resolver) PolicyParams(ctx context.Context) (rs []*internal.ParamResolver, err error) {
 	params := r.Group.PolicyParams
 	if !r.policyParamsLoaded {
-		if err = db.DB(context.TODO()).Model(r.Group).Association("PolicyParams").Find(&params); err != nil {
+		if err = db.DB(ctx).Model(r.Group).Association("PolicyParams").Find(&params); err != nil {
 			return nil, err
 		}
 	}

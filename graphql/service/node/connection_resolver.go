@@ -7,6 +7,7 @@ package node
 
 import (
 	"context"
+
 	"github.com/daeuniverse/dae-wing/common"
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/graphql/service"
@@ -15,12 +16,12 @@ import (
 )
 
 type ConnectionResolver struct {
-	baseQuery func() *gorm.DB
+	baseQuery func(context.Context) *gorm.DB
 
 	models []db.Node
 }
 
-func NewConnectionResolver(_id *graphql.ID, _subscriptionId *graphql.ID, first *int32, _after *graphql.ID) (r *ConnectionResolver, err error) {
+func NewConnectionResolver(ctx context.Context, _id *graphql.ID, _subscriptionId *graphql.ID, first *int32, _after *graphql.ID) (r *ConnectionResolver, err error) {
 	var id uint
 	var subscriptionId uint
 	if _id != nil {
@@ -35,8 +36,8 @@ func NewConnectionResolver(_id *graphql.ID, _subscriptionId *graphql.ID, first *
 			return nil, err
 		}
 	}
-	baseQuery := func() *gorm.DB {
-		q := db.DB(context.TODO()).Model(&db.Node{})
+	baseQuery := func(ctx context.Context) *gorm.DB {
+		q := db.DB(ctx).Model(&db.Node{})
 		if _id != nil {
 			q = q.Where("id = ?", id)
 		}
@@ -48,7 +49,7 @@ func NewConnectionResolver(_id *graphql.ID, _subscriptionId *graphql.ID, first *
 		return q
 	}
 
-	q := baseQuery()
+	q := baseQuery(ctx)
 	if _after != nil {
 		after, err := common.DecodeCursor(*_after)
 		if err != nil {
@@ -69,9 +70,9 @@ func NewConnectionResolver(_id *graphql.ID, _subscriptionId *graphql.ID, first *
 	}, nil
 }
 
-func (r *ConnectionResolver) TotalCount() (int32, error) {
+func (r *ConnectionResolver) TotalCount(ctx context.Context) (int32, error) {
 	var count int64
-	if err := r.baseQuery().Count(&count).Error; err != nil {
+	if err := r.baseQuery(ctx).Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return int32(count), nil
@@ -85,7 +86,7 @@ func (r *ConnectionResolver) Edges() (rs []*Resolver, err error) {
 	}
 	return rs, nil
 }
-func (r *ConnectionResolver) PageInfo() (pr *service.PageInfoResolver, err error) {
+func (r *ConnectionResolver) PageInfo(ctx context.Context) (pr *service.PageInfoResolver, err error) {
 	if len(r.models) == 0 {
 		return &service.PageInfoResolver{
 			FStartCursor: nil,
@@ -97,7 +98,7 @@ func (r *ConnectionResolver) PageInfo() (pr *service.PageInfoResolver, err error
 	end := common.EncodeCursor(r.models[len(r.models)-1].ID)
 	// Get the last ID.
 	var lastNode db.Node
-	if err := r.baseQuery().Select("id").Order("id DESC").First(&lastNode).Error; err != nil {
+	if err := r.baseQuery(ctx).Select("id").Order("id DESC").First(&lastNode).Error; err != nil {
 		return nil, err
 	}
 	return &service.PageInfoResolver{

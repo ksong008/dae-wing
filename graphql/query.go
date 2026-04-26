@@ -84,11 +84,11 @@ func getToken(
 	return token.SignedString([]byte(m.JwtSecret))
 }
 
-func (r *queryResolver) Token(args *struct {
+func (r *queryResolver) Token(ctx context.Context, args *struct {
 	Username string
 	Password string
 }) (string, error) {
-	return getToken(db.DB(context.TODO()), args.Username, args.Password)
+	return getToken(db.DB(ctx), args.Username, args.Password)
 }
 func numberUsers(d *gorm.DB) (int32, error) {
 	var cnt int64
@@ -98,8 +98,8 @@ func numberUsers(d *gorm.DB) (int32, error) {
 	return int32(cnt), nil
 
 }
-func (r *queryResolver) NumberUsers() (int32, error) {
-	return numberUsers(db.DB(context.TODO()))
+func (r *queryResolver) NumberUsers(ctx context.Context) (int32, error) {
+	return numberUsers(db.DB(ctx))
 }
 
 func userFromContext(ctx context.Context) (u *db.User, err error) {
@@ -154,13 +154,13 @@ func (r *queryResolver) NodeLatencies(ctx context.Context, args *struct {
 	return node.QueryLatencies(ctx, args.IDs)
 }
 
-func (r *queryResolver) Configs(args *struct {
+func (r *queryResolver) Configs(ctx context.Context, args *struct {
 	ID       *graphql.ID
 	Selected *bool
 }) (rs []*config.Resolver, err error) {
 	// Check if query specific ID.
 	var id uint
-	q := db.DB(context.TODO()).Model(&db.Config{})
+	q := db.DB(ctx).Model(&db.Config{})
 	if args.ID != nil {
 		id, err = common.DecodeCursor(*args.ID)
 		if err != nil {
@@ -190,13 +190,13 @@ func (r *queryResolver) Configs(args *struct {
 	return rs, nil
 }
 
-func (r *queryResolver) Dnss(args *struct {
+func (r *queryResolver) Dnss(ctx context.Context, args *struct {
 	ID       *graphql.ID
 	Selected *bool
 }) (rs []*dns.Resolver, err error) {
 	// Check if query specific ID.
 	var id uint
-	q := db.DB(context.TODO()).Model(&db.Dns{})
+	q := db.DB(ctx).Model(&db.Dns{})
 	if args.ID != nil {
 		id, err = common.DecodeCursor(*args.ID)
 		if err != nil {
@@ -226,13 +226,13 @@ func (r *queryResolver) Dnss(args *struct {
 	return rs, nil
 }
 
-func (r *queryResolver) Routings(args *struct {
+func (r *queryResolver) Routings(ctx context.Context, args *struct {
 	ID       *graphql.ID
 	Selected *bool
 }) (rs []*routing.Resolver, err error) {
 	// Check if query specific ID.
 	var id uint
-	q := db.DB(context.TODO()).Model(&db.Routing{})
+	q := db.DB(ctx).Model(&db.Routing{})
 	if args.ID != nil {
 		id, err = common.DecodeCursor(*args.ID)
 		if err != nil {
@@ -291,8 +291,8 @@ func (r *queryResolver) ParsedDns(args *struct{ Raw string }) (dr *dns.DnsResolv
 		Dns: &conf.Dns,
 	}, nil
 }
-func (r *queryResolver) Subscriptions(args *struct{ ID *graphql.ID }) (rs []*subscription.Resolver, err error) {
-	q := db.DB(context.TODO()).
+func (r *queryResolver) Subscriptions(ctx context.Context, args *struct{ ID *graphql.ID }) (rs []*subscription.Resolver, err error) {
+	q := db.DB(ctx).
 		Model(&db.Subscription{})
 	if args.ID != nil {
 		id, err := common.DecodeCursor(*args.ID)
@@ -317,17 +317,17 @@ func (r *queryResolver) Subscriptions(args *struct{ ID *graphql.ID }) (rs []*sub
 	return rs, nil
 }
 
-func (r *queryResolver) Group(args *struct{ Name string }) (rs *group.Resolver, err error) {
+func (r *queryResolver) Group(ctx context.Context, args *struct{ Name string }) (rs *group.Resolver, err error) {
 	var m db.Group
-	if err = preloadGroupQuery(db.DB(context.TODO())).
+	if err = preloadGroupQuery(db.DB(ctx)).
 		Model(&db.Group{}).
 		Where("name = ?", args.Name).First(&m).Error; err != nil {
 		return nil, err
 	}
 	return group.NewPreloadedResolver(&m), nil
 }
-func (r *queryResolver) Groups(args *struct{ ID *graphql.ID }) (rs []*group.Resolver, err error) {
-	q := preloadGroupQuery(db.DB(context.TODO())).
+func (r *queryResolver) Groups(ctx context.Context, args *struct{ ID *graphql.ID }) (rs []*group.Resolver, err error) {
+	q := preloadGroupQuery(db.DB(ctx)).
 		Model(&db.Group{})
 	if args.ID != nil {
 		id, err := common.DecodeCursor(*args.ID)
@@ -358,11 +358,11 @@ func preloadGroupQuery(q *gorm.DB) *gorm.DB {
 		Preload("SubscriptionBindings.Subscription").
 		Preload("SubscriptionBindings.Subscription.Node")
 }
-func (r *queryResolver) Nodes(args *struct {
+func (r *queryResolver) Nodes(ctx context.Context, args *struct {
 	ID             *graphql.ID
 	SubscriptionID *graphql.ID
 	First          *int32
 	After          *graphql.ID
 }) (rs *node.ConnectionResolver, err error) {
-	return node.NewConnectionResolver(args.ID, args.SubscriptionID, args.First, args.After)
+	return node.NewConnectionResolver(ctx, args.ID, args.SubscriptionID, args.First, args.After)
 }

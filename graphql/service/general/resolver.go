@@ -16,8 +16,8 @@ type Resolver struct {
 	GraphqlSchema string
 }
 
-func (r *Resolver) Dae() *DaeResolver {
-	return &DaeResolver{Ctx: context.TODO()}
+func (r *Resolver) Dae(ctx context.Context) *DaeResolver {
+	return &DaeResolver{Ctx: ctx}
 }
 
 func (r *Resolver) Interfaces(args *struct {
