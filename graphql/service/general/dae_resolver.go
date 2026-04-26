@@ -40,6 +40,9 @@ func (r *DaeResolver) Modified() (bool, error) {
 	if !m.Running {
 		return false, nil
 	}
+	if m.RunningConfigID == nil || m.RunningDnsID == nil || m.RunningRoutingID == nil {
+		return true, nil
+	}
 	var selectedConfig db.Config
 	if q = tx.Model(&db.Config{}).Where("selected = ?", true).First(&selectedConfig); q.Error != nil || q.RowsAffected == 0 {
 		// No selected config. Maybe the running config was deleted.
