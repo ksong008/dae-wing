@@ -5,9 +5,24 @@
 
 package node
 
-import "testing"
+import (
+	"testing"
+
+	shadowsocksrdialer "github.com/daeuniverse/outbound/dialer/shadowsocksr"
+)
 
 func TestNodeTransport(t *testing.T) {
+	ssrLink := (&shadowsocksrdialer.ShadowsocksR{
+		Name:     "demo",
+		Server:   "example.com",
+		Port:     8388,
+		Password: "password",
+		Cipher:   "aes-128-cfb",
+		Proto:    "auth_chain_a",
+		Obfs:     "tls1.2_ticket_auth",
+		Protocol: "shadowsocksr",
+	}).ExportToURL()
+
 	tests := []struct {
 		name     string
 		protocol string
@@ -47,7 +62,7 @@ func TestNodeTransport(t *testing.T) {
 		{
 			name:     "ssr proto and obfs",
 			protocol: "shadowsocksr",
-			link:     "ssr://ZXhhbXBsZS5jb206ODM4ODphdXRoX2NoYWluX2E6YWVzLTEyOC1jZmI6dGxzMS4yX3RpY2tldF9hdXRoLz9remarks=ZGVtbw==&protoparam=&obfsparam=",
+			link:     ssrLink,
 			want:     strPtr("auth_chain_a · tls1.2_ticket_auth"),
 		},
 		{
