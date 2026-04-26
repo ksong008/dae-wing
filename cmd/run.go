@@ -182,7 +182,9 @@ func restoreRunningState() (err error) {
 			tx2.Rollback()
 			return fmt.Errorf("%w; %v", err, err2)
 		}
-		tx2.Commit()
+		if commitErr := tx2.Commit().Error; commitErr != nil {
+			return fmt.Errorf("%w; %v", err, commitErr)
+		}
 		return err
 	}
 	return nil
