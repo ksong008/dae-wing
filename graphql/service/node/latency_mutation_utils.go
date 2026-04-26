@@ -120,6 +120,10 @@ func testSingleNodeLatency(option *dialer.GlobalOption, node *db.Node) *LatencyR
 	if result.Alive {
 		latencyMs := int32(result.Latency.Milliseconds())
 		resolver.LatencyMsV = &latencyMs
+		if result.Message != "" {
+			msg := result.Message
+			resolver.MessageV = &msg
+		}
 		return resolver
 	}
 	if result.Message != "" {
