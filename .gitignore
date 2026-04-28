@@ -4,7 +4,6 @@
 
 # Generated files
 generated_*.go
-schema.graphql
 outline.json
 dae-wing
 go-mod

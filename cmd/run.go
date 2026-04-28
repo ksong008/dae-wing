@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,15 +16,12 @@ import (
 
 	"github.com/daeuniverse/dae-wing/cmd/internal"
 	"github.com/daeuniverse/dae-wing/common"
-	"github.com/daeuniverse/dae-wing/dae"
 	"github.com/daeuniverse/dae-wing/db"
-	"github.com/daeuniverse/dae-wing/graphql"
-	"github.com/daeuniverse/dae-wing/graphql/service/config"
-
-	"github.com/daeuniverse/dae-wing/graphql/service/subscription"
+	"github.com/daeuniverse/dae-wing/engine"
+	"github.com/daeuniverse/dae-wing/orchestrator"
+	"github.com/daeuniverse/dae-wing/transport/httpapi"
 	"github.com/daeuniverse/dae-wing/webrender"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/graph-gophers/graphql-go/relay"
 	"github.com/rs/cors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -33,7 +31,8 @@ import (
 func init() {
 	runCmd.PersistentFlags().StringVarP(&cfgDir, "config", "c", filepath.Join("/etc", db.AppName), "config directory")
 	runCmd.PersistentFlags().StringVarP(&listen, "listen", "l", "0.0.0.0:2023", "listening address")
-	runCmd.PersistentFlags().BoolVar(&apiOnly, "api-only", false, "run graphql backend without dae")
+	runCmd.PersistentFlags().StringVar(&pprofListen, "pprof-listen", "", "optional local pprof listen address, e.g. 127.0.0.1:6061")
+	runCmd.PersistentFlags().BoolVar(&apiOnly, "api-only", false, "run control-plane backend without dae")
 	runCmd.PersistentFlags().StringVar(&logFile, "logfile", "", "Log file to write. Empty means writing to stdout and stderr.")
 	runCmd.PersistentFlags().IntVar(&logFileMaxSize, "logfile-maxsize", 30, "Unit: MB. The maximum size in megabytes of the log file before it gets rotated.")
 	runCmd.PersistentFlags().IntVar(&logFileMaxBackups, "logfile-maxbackups", 3, "The maximum number of old log files to retain.")
@@ -43,8 +42,9 @@ func init() {
 func _errorExit(err error) {
 	// Notify to Close().
 	logrus.Errorf("Exiting: %v", err)
-	dae.ChReloadConfigs <- nil
-	<-dae.GracefullyExit
+	if stopErr := engine.Default().Stop(10 * time.Second); stopErr != nil {
+		logrus.Errorf("Force exit after shutdown timeout: %v", stopErr)
+	}
 }
 
 func errorExit(err error) {
@@ -60,6 +60,7 @@ var (
 	disableTimestamp  bool
 	listen            string
 	apiOnly           bool
+	pprofListen       string
 
 	runCmd = &cobra.Command{
 		Use:   "run",
@@ -82,7 +83,7 @@ var (
 				logrus.Fatalln("Failed to init db:", err)
 			}
 
-			subscription.UpdateAll(context.TODO())
+			orchestrator.EnsureSubscriptionSchedulers(context.TODO())
 
 			// Run dae.
 			var logOpts *lumberjack.Logger
@@ -99,9 +100,9 @@ var (
 				db.SetOutput(logOpts)
 			}
 			go func() {
-				if err := dae.Run(
+				if err := engine.Default().Run(
 					logrus.StandardLogger(),
-					dae.EmptyConfig,
+					engine.Default().EmptyConfig(),
 					[]string{cfgDir},
 					disableTimestamp,
 					apiOnly,
@@ -111,19 +112,34 @@ var (
 				os.Exit(1)
 			}()
 			// Reload with running state.
-			if err := restoreRunningState(); err != nil {
+			if err := orchestrator.RestoreRunningState(context.TODO()); err != nil {
 				logrus.Warnln("Failed to restore last running state:", err)
 			}
 
-			// ListenAndServe GraphQL.
-			schema, err := graphql.Schema()
-			if err != nil {
+			// ListenAndServe control-plane APIs.
+			mux := http.NewServeMux()
+			mux.Handle("/api/", auth(cors.AllowAll().Handler(http.StripPrefix("/api", httpapi.NewHandler()))))
+			if err := webrender.Handle(mux); err != nil {
 				errorExit(err)
 			}
-			mux := http.NewServeMux()
-			mux.Handle("/graphql", auth(cors.AllowAll().Handler(&relay.Handler{Schema: schema})))
-			if err = webrender.Handle(mux); err != nil {
-				errorExit(err)
+			var pprofServer *http.Server
+			if pprofListen != "" {
+				pprofServer = &http.Server{
+					Addr:              pprofListen,
+					Handler:           http.DefaultServeMux,
+					ReadHeaderTimeout: 5 * time.Second,
+				}
+				defer func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					defer cancel()
+					_ = pprofServer.Shutdown(ctx)
+				}()
+				go func() {
+					logrus.Printf("pprof listen on http://%s/debug/pprof/", pprofListen)
+					if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+						logrus.Errorln("pprof ListenAndServe:", err)
+					}
+				}()
 			}
 			go func() {
 				host, port, _ := net.SplitHostPort(listen)
@@ -139,7 +155,7 @@ var (
 				}
 				logrus.Printf("Listen on %v", listen)
 			listenAndServe:
-				if err = http.ListenAndServe(listen, mux); err != nil {
+				if err := http.ListenAndServe(listen, mux); err != nil {
 					errorExit(err)
 				}
 			}()
@@ -152,64 +168,6 @@ var (
 		},
 	}
 )
-
-func restoreRunningState() (err error) {
-	reload, err := shouldReload()
-	if err != nil {
-		return err
-	}
-	if !reload {
-		return nil
-	}
-	tx := db.BeginTx(context.TODO())
-	// Reload.
-	if _, err = config.Run(tx, false); err != nil {
-		tx.Rollback()
-
-		// Another tx.
-		// Set running = false.
-		tx2 := db.BeginTx(context.TODO())
-		var sys db.System
-		if err2 := tx2.Model(&sys).Select("id").First(&sys).Error; err2 != nil {
-			tx2.Rollback()
-			return fmt.Errorf("%w; %v", err, err2)
-		}
-		if err2 := tx2.Model(&sys).Updates(map[string]interface{}{
-			"running": false,
-		}).Error; err2 != nil {
-			tx2.Rollback()
-			return fmt.Errorf("%w; %v", err, err2)
-		}
-		tx2.Commit()
-		return err
-	}
-	tx.Commit()
-	return nil
-}
-
-func shouldReload() (ok bool, err error) {
-	var sys db.System
-	if err := db.DB(context.TODO()).Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
-		return false, err
-	}
-	if !sys.Running {
-		return false, nil
-	}
-	var m db.Config
-	q := db.DB(context.TODO()).Model(&db.Config{}).
-		Where("selected = ?", true).
-		First(&m)
-	if q.Error != nil {
-		return false, q.Error
-	}
-	if q.RowsAffected == 0 {
-		// Data inconsistency.
-		logrus.Warnln("Data inconsistency detected: no selected config but last state is running")
-		_ = db.DB(context.TODO()).Model(&sys).Update("running", false).Error
-		return false, nil
-	}
-	return true, nil
-}
 
 func auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

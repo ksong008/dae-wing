@@ -82,22 +82,25 @@ docker run -d \
 
 ## 📖 API Documentation
 
-dae-wing uses [GraphQL](https://graphql.org/) for its API.
+dae-wing serves its control-plane API under `/api/`.
 
-### Export Schema
+### OpenAPI
 
 ```bash
 go build -o dae-wing
-./dae-wing export schema > schema.graphql
+curl http://localhost:2023/api/openapi.json
+./dae-wing export openapi > openapi.json
 ```
 
-### GraphQL Playground
+### Runtime API
 
-Use [GraphQL Playground](https://github.com/graphql/graphql-playground) for interactive API exploration:
+Common endpoints include:
 
-1. Open GraphQL Playground
-2. Set endpoint to `http://localhost:2023/graphql`
-3. Explore the schema and test queries
+1. `GET /api/openapi.json`
+2. `GET /api/general/state`
+3. `GET /api/runtime/overview`
+4. `POST /api/runtime/reload`
+5. `POST /api/runtime/stop`
 
 ### Export Config Outline
 

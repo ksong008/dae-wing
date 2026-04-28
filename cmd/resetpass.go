@@ -9,7 +9,7 @@ import (
 
 	"github.com/daeuniverse/dae-wing/cmd/internal"
 	"github.com/daeuniverse/dae-wing/db"
-	"github.com/daeuniverse/dae-wing/graphql"
+	"github.com/daeuniverse/dae-wing/orchestrator"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -46,12 +46,9 @@ var (
 			}
 			for _, u := range users {
 				password := gonanoid.Must(8)
-				if _, err := graphql.UpdatePassword(ctx, &struct {
-					CurrentPassword string
-					NewPassword     string
-				}{
+				if _, err := orchestrator.UpdatePassword(ctx, &u, orchestrator.PasswordUpdateInput{
 					NewPassword: password,
-				}, &u, true); err != nil {
+				}, true); err != nil {
 					logrus.Fatalf("Username: %v: %v", u.Username, err)
 				}
 				fmt.Printf("Username: %v, Password: %v\n", u.Username, password)
