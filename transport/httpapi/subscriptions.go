@@ -212,16 +212,8 @@ func handleSubscriptionNodes(rw http.ResponseWriter, r *http.Request, id uint) {
 		writeMethodNotAllowed(rw, http.MethodGet)
 		return
 	}
-	afterID, hasAfterID, err := parseAfterCursorQuery(r)
-	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
-	limitValue, err := parseLimitQuery(r)
-	if err != nil {
-		writeError(rw, http.StatusBadRequest, err.Error())
-		return
-	}
+	afterID, hasAfterID := parseOptionalUint(r.URL.Query().Get("afterId"))
+	limitValue := parsePositiveInt(r.URL.Query().Get("limit"), 0)
 
 	var afterIDPtr *uint
 	if hasAfterID {
@@ -243,9 +235,7 @@ func handleSubscriptionNodes(rw http.ResponseWriter, r *http.Request, id uint) {
 	}
 	response := nodeListResponse{
 		Items:      items,
-		Edges:      items,
 		TotalCount: totalCount,
-		PageInfo:   pageInfoFromModels(models, limitPtr),
 	}
 	if limitPtr != nil && len(models) == *limitPtr {
 		nextAfterID := models[len(models)-1].ID

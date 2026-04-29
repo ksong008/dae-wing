@@ -76,3 +76,8 @@ bundle: deps
 fmt:
 	go fmt ./...
 .PHONY: fmt
+
+emoji-lint:
+	./scripts/check_no_emoji.sh
+	cd dae-core && ./scripts/check_no_emoji.sh
+.PHONY: emoji-lint

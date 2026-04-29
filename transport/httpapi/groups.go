@@ -7,7 +7,7 @@ package httpapi
 
 import (
 	"net/http"
-	"strings"
+	"time"
 
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/orchestrator"
@@ -24,6 +24,9 @@ type groupSubscriptionResource struct {
 	NameFilterRegex *string        `json:"nameFilterRegex,omitempty"`
 	MatchedCount    int            `json:"matchedCount"`
 	MatchedNodes    []nodeResource `json:"matchedNodes"`
+	UpdatedAt       string         `json:"updatedAt"`
+	Status          string         `json:"status"`
+	Info            string         `json:"info"`
 	Link            string         `json:"link"`
 	Tag             *string        `json:"tag,omitempty"`
 }
@@ -60,10 +63,6 @@ type groupNodesRequest struct {
 }
 
 func handleGroups(rw http.ResponseWriter, r *http.Request) {
-	if name, ok := parseGroupByNamePath(r.URL.Path); ok {
-		handleGroupByName(rw, r, name)
-		return
-	}
 	switch r.Method {
 	case http.MethodGet:
 		id, hasID := parseOptionalUint(r.URL.Query().Get("id"))
@@ -107,28 +106,6 @@ func handleGroups(rw http.ResponseWriter, r *http.Request) {
 	default:
 		writeMethodNotAllowed(rw, http.MethodGet+", "+http.MethodPost)
 	}
-}
-
-func handleGroupByName(rw http.ResponseWriter, r *http.Request, name string) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(rw, http.MethodGet)
-		return
-	}
-	models, err := orchestrator.ListGroups(r.Context(), nil, &name)
-	if err != nil {
-		writeError(rw, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if len(models) == 0 {
-		writeError(rw, http.StatusNotFound, "not found")
-		return
-	}
-	items, err := toGroupResources([]db.Group{models[0]})
-	if err != nil {
-		writeError(rw, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(rw, http.StatusOK, items[0])
 }
 
 func handleGroupResource(rw http.ResponseWriter, r *http.Request) {
@@ -284,6 +261,9 @@ func toGroupResources(models []db.Group) ([]groupResource, error) {
 				NameFilterRegex: binding.NameFilterRegex,
 				MatchedCount:    len(matchedNodes),
 				MatchedNodes:    matchedResources,
+				UpdatedAt:       binding.Subscription.UpdatedAt.Format(time.RFC3339Nano),
+				Status:          binding.Subscription.Status,
+				Info:            binding.Subscription.Info,
 				Link:            binding.Subscription.Link,
 				Tag:             binding.Subscription.Tag,
 			})
@@ -319,13 +299,4 @@ func toConfigParams(params []paramResource) []config_parser.Param {
 		})
 	}
 	return items
-}
-
-func parseGroupByNamePath(path string) (string, bool) {
-	trimmed := strings.Trim(path, "/")
-	parts := strings.Split(trimmed, "/")
-	if len(parts) != 3 || parts[0] != "groups" || parts[1] != "by-name" || strings.TrimSpace(parts[2]) == "" {
-		return "", false
-	}
-	return parts[2], true
 }

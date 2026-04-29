@@ -6,19 +6,18 @@
 package engine
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
-	"github.com/daeuniverse/dae-wing/dae"
 	daeConfig "github.com/daeuniverse/dae/config"
 	"github.com/daeuniverse/dae/control"
+	"github.com/daeuniverse/dae/engine"
 	"github.com/sirupsen/logrus"
 )
 
-type RuntimeTrafficSample = dae.RuntimeTrafficSample
-type RuntimeOverview = dae.RuntimeOverview
-type FlatDesc = dae.FlatDesc
+type RuntimeTrafficSample = engine.RuntimeTrafficSample
+type RuntimeOverview = engine.RuntimeOverview
+type FlatDesc = engine.FlatDesc
 
 type Service interface {
 	EmptyGlobalSection() string
@@ -37,9 +36,17 @@ type Service interface {
 	IsControlPlaneNotInit(err error) bool
 }
 
-type nativeService struct{}
+type nativeService struct {
+	engine *engine.Engine
+}
 
-var defaultService Service = nativeService{}
+func newNativeService() *nativeService {
+	return &nativeService{
+		engine: engine.New(engine.Options{}),
+	}
+}
+
+var defaultService Service = newNativeService()
 
 func Default() Service {
 	return defaultService
@@ -47,84 +54,64 @@ func Default() Service {
 
 func SetDefault(service Service) {
 	if service == nil {
-		defaultService = nativeService{}
+		defaultService = newNativeService()
 		return
 	}
 	defaultService = service
 }
 
-func (nativeService) EmptyGlobalSection() string {
-	return dae.EmptyGlobalSection
+func (*nativeService) EmptyGlobalSection() string {
+	return engine.EmptyGlobalSection
 }
 
-func (nativeService) EmptyDnsSection() string {
-	return dae.EmptyDnsSection
+func (*nativeService) EmptyDnsSection() string {
+	return engine.EmptyDnsSection
 }
 
-func (nativeService) EmptyRoutingSection() string {
-	return dae.EmptyRoutingSection
+func (*nativeService) EmptyRoutingSection() string {
+	return engine.EmptyRoutingSection
 }
 
-func (nativeService) EmptyConfig() *daeConfig.Config {
-	return dae.EmptyConfig
+func (*nativeService) EmptyConfig() *daeConfig.Config {
+	return engine.EmptyConfig()
 }
 
-func (nativeService) ExportFlatDesc() []*FlatDesc {
-	return dae.ExportFlatDesc()
+func (*nativeService) ExportFlatDesc() []*FlatDesc {
+	return engine.ExportFlatDesc()
 }
 
-func (nativeService) ParseConfig(globalSection *string, dnsSection *string, routingSection *string) (*daeConfig.Config, error) {
-	return dae.ParseConfig(globalSection, dnsSection, routingSection)
+func (*nativeService) ParseConfig(globalSection *string, dnsSection *string, routingSection *string) (*daeConfig.Config, error) {
+	return engine.ParseConfig(globalSection, dnsSection, routingSection)
 }
 
-func (nativeService) NecessaryOutbounds(routing *daeConfig.Routing) []string {
-	return dae.NecessaryOutbounds(routing)
+func (*nativeService) NecessaryOutbounds(routing *daeConfig.Routing) []string {
+	return engine.NecessaryOutbounds(routing)
 }
 
-func (nativeService) Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string, disableTimestamp bool, dry bool) error {
-	return dae.Run(log, conf, externGeoDataDirs, disableTimestamp, dry)
+func (n *nativeService) Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string, disableTimestamp bool, dry bool) error {
+	return n.engine.Run(log, conf, externGeoDataDirs, disableTimestamp, dry)
 }
 
-func (nativeService) Reload(conf *daeConfig.Config) error {
-	ch := make(chan error, 1)
-	dae.ChReloadConfigs <- &dae.ReloadMessage{
-		Config:   conf,
-		Callback: ch,
-	}
-	return <-ch
+func (n *nativeService) Reload(conf *daeConfig.Config) error {
+	return n.engine.Reload(conf)
 }
 
-func (nativeService) Stop(timeout time.Duration) error {
-	if timeout <= 0 {
-		dae.ChReloadConfigs <- nil
-		<-dae.GracefullyExit
-		return nil
-	}
-	select {
-	case dae.ChReloadConfigs <- nil:
-	case <-time.After(timeout):
-		return errors.New("timeout sending dae shutdown signal")
-	}
-	select {
-	case <-dae.GracefullyExit:
-		return nil
-	case <-time.After(timeout):
-		return errors.New("timeout waiting for dae shutdown")
-	}
+func (n *nativeService) Stop(timeout time.Duration) error {
+	return n.engine.Stop(timeout)
 }
 
-func (nativeService) ControlPlane() (*control.ControlPlane, error) {
-	return dae.ControlPlane()
+func (n *nativeService) ControlPlane() (*control.ControlPlane, error) {
+	return n.engine.ControlPlane()
 }
 
-func (nativeService) GetRuntimeOverview(windowSec int, maxPoints int) (*RuntimeOverview, error) {
-	return dae.GetRuntimeOverview(windowSec, maxPoints)
+func (n *nativeService) GetRuntimeOverview(windowSec int, maxPoints int) (*RuntimeOverview, error) {
+	return n.engine.GetRuntimeOverview(windowSec, maxPoints)
 }
 
-func (nativeService) HTTPTransport() http.RoundTripper {
-	return dae.HttpTransport
+func (n *nativeService) HTTPTransport() http.RoundTripper {
+	return n.engine.HTTPTransport()
 }
 
-func (nativeService) IsControlPlaneNotInit(err error) bool {
-	return errors.Is(err, dae.ErrControlPlaneNotInit)
+func (n *nativeService) IsControlPlaneNotInit(err error) bool {
+	return n.engine.IsControlPlaneNotInit(err)
 }

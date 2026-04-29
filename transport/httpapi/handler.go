@@ -6,10 +6,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -34,6 +37,9 @@ type runtimeOverviewResponse struct {
 	DownloadTotal     string                         `json:"downloadTotal"`
 	ActiveConnections int                            `json:"activeConnections"`
 	UDPSessions       int                            `json:"udpSessions"`
+	RSSBytes          string                         `json:"rssBytes"`
+	HeapAllocBytes    string                         `json:"heapAllocBytes"`
+	Goroutines        int                            `json:"goroutines"`
 	Samples           []runtimeTrafficSampleResponse `json:"samples"`
 }
 
@@ -71,7 +77,6 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/auth/token", handleAuthToken)
 	mux.HandleFunc("/auth/users", handleAuthUsers)
 	mux.HandleFunc("/general/interfaces", requireAuth(handleGeneralInterfaces))
-	mux.HandleFunc("/general/schema", requireAuth(handleGeneralSchema))
 	mux.HandleFunc("/general/state", requireAuth(handleGeneralState))
 	mux.HandleFunc("/openapi.json", handleOpenAPI)
 	mux.HandleFunc("/configs", requireAuth(handleConfigs))
@@ -81,7 +86,6 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/dns/parsed", requireAuth(handleParsedDNS))
 	mux.HandleFunc("/dns/", requireAuth(handleDNSResource))
 	mux.HandleFunc("/groups", requireAuth(handleGroups))
-	mux.HandleFunc("/groups/by-name/", requireAuth(handleGroups))
 	mux.HandleFunc("/groups/", requireAuth(handleGroupResource))
 	mux.HandleFunc("/nodes", requireAuth(handleNodes))
 	mux.HandleFunc("/nodes/", requireAuth(handleNodeResource))
@@ -91,6 +95,7 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/subscriptions", requireAuth(handleSubscriptions))
 	mux.HandleFunc("/subscriptions/", requireAuth(handleSubscriptionResource))
 	mux.HandleFunc("/user/me", requireAuth(handleCurrentUser))
+	mux.HandleFunc("/user/me/default-resources", requireAuth(handleCurrentUserDefaultResources))
 	mux.HandleFunc("/user/me/password", requireAuth(handleCurrentUserPassword))
 	mux.HandleFunc("/user/me/storage", requireAuth(handleCurrentUserStorage))
 	mux.HandleFunc("/runtime/overview", requireAuth(handleRuntimeOverview))
@@ -243,6 +248,7 @@ func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewR
 			DownloadRate: strconv.FormatUint(sample.DownloadRate, 10),
 		})
 	}
+	rssBytes, heapAllocBytes, goroutines := currentProcessStats()
 	return runtimeOverviewResponse{
 		UpdatedAt:         overview.UpdatedAt.Format(time.RFC3339Nano),
 		UploadRate:        strconv.FormatUint(overview.UploadRate, 10),
@@ -251,8 +257,32 @@ func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewR
 		DownloadTotal:     strconv.FormatUint(overview.DownloadTotal, 10),
 		ActiveConnections: overview.ActiveConnections,
 		UDPSessions:       overview.UDPSessions,
+		RSSBytes:          strconv.FormatUint(rssBytes, 10),
+		HeapAllocBytes:    strconv.FormatUint(heapAllocBytes, 10),
+		Goroutines:        goroutines,
 		Samples:           samples,
 	}
+}
+
+func currentProcessStats() (rssBytes uint64, heapAllocBytes uint64, goroutines int) {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	heapAllocBytes = memStats.HeapAlloc
+	goroutines = runtime.NumGoroutine()
+
+	data, err := os.ReadFile("/proc/self/statm")
+	if err != nil {
+		return 0, heapAllocBytes, goroutines
+	}
+	fields := bytes.Fields(data)
+	if len(fields) < 2 {
+		return 0, heapAllocBytes, goroutines
+	}
+	residentPages, err := strconv.ParseUint(string(fields[1]), 10, 64)
+	if err != nil {
+		return 0, heapAllocBytes, goroutines
+	}
+	return residentPages * uint64(os.Getpagesize()), heapAllocBytes, goroutines
 }
 
 func decodeJSONBody(r *http.Request, dst any) error {

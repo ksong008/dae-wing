@@ -1,6 +1,6 @@
 # dae-wing
 
-**A lightweight GraphQL API wrapper for [dae](https://github.com/daeuniverse/dae)** — the high-performance eBPF-based proxy solution.
+**A lightweight REST/OpenAPI control-plane for [dae](https://github.com/daeuniverse/dae)** — the high-performance eBPF-based proxy solution.
 
 [![License](https://img.shields.io/github/license/daeuniverse/dae-wing?style=flat-square&color=blue)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/daeuniverse/dae-wing?style=flat-square)](go.mod)
@@ -11,7 +11,7 @@
 
 ## ✨ Features
 
-- 🚀 **GraphQL API** — Modern, type-safe API for managing dae
+- 🚀 **REST/OpenAPI API** — Typed control-plane APIs for managing dae
 - 🔄 **Hot Reload** — Switch configs without restarting
 - 📦 **Subscription Management** — Import and manage proxy subscriptions
 - 🐳 **Docker Ready** — Easy deployment with Docker/Docker Compose

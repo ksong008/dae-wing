@@ -66,6 +66,19 @@ func TestAuthAndUserHandlers(t *testing.T) {
 		t.Fatalf("get storage code = %d, body = %s", getStorage.Code, getStorage.Body.String())
 	}
 
+	ensureDefaultsBody := `{"configName":"global","global":{"logLevel":"info"},"dnsName":"default","dns":"upstream {\n  googledns: 'udp://1.1.1.1:53'\n}\nrouting {\n  request {\n    fallback: googledns\n  }\n}","routingName":"default","routing":"fallback: proxy","groupName":"proxy","policy":"random","policyParams":[],"mode":"rule"}`
+	ensureDefaults := performRawRequest(handler, http.MethodPost, "/user/me/default-resources", ensureDefaultsBody, &user)
+	if ensureDefaults.Code != http.StatusOK {
+		t.Fatalf("ensure default resources code = %d, body = %s", ensureDefaults.Code, ensureDefaults.Body.String())
+	}
+	defaults := decodeBody(t, ensureDefaults)
+	if defaults["defaultConfigID"] == "" || defaults["defaultRoutingID"] == "" || defaults["defaultDNSID"] == "" || defaults["defaultGroupID"] == "" {
+		t.Fatalf("ensure default resources response = %#v", defaults)
+	}
+	if got := defaults["mode"].(string); got != "rule" {
+		t.Fatalf("ensure default resources mode = %q, want rule", got)
+	}
+
 	changePassword := performRawRequest(handler, http.MethodPost, "/user/me/password", `{"currentPassword":"abc123","newPassword":"def456"}`, &user)
 	if changePassword.Code != http.StatusOK {
 		t.Fatalf("change password code = %d, body = %s", changePassword.Code, changePassword.Body.String())
@@ -94,9 +107,19 @@ func TestGeneralAndGroupHandlers(t *testing.T) {
 		t.Fatalf("general state code = %d, body = %s", state.Code, state.Body.String())
 	}
 
-	schema := performRawRequest(handler, http.MethodGet, "/general/schema", "", &user)
-	if schema.Code != http.StatusOK {
-		t.Fatalf("general schema code = %d, body = %s", schema.Code, schema.Body.String())
+	runtimeOverview := performRawRequest(handler, http.MethodGet, "/runtime/overview", "", &user)
+	if runtimeOverview.Code != http.StatusOK {
+		t.Fatalf("runtime overview code = %d, body = %s", runtimeOverview.Code, runtimeOverview.Body.String())
+	}
+	runtimeBody := decodeBody(t, runtimeOverview)
+	if _, ok := runtimeBody["rssBytes"].(string); !ok {
+		t.Fatalf("runtime rssBytes = %#v", runtimeBody["rssBytes"])
+	}
+	if _, ok := runtimeBody["heapAllocBytes"].(string); !ok {
+		t.Fatalf("runtime heapAllocBytes = %#v", runtimeBody["heapAllocBytes"])
+	}
+	if _, ok := runtimeBody["goroutines"].(float64); !ok {
+		t.Fatalf("runtime goroutines = %#v", runtimeBody["goroutines"])
 	}
 
 	interfaces := performRawRequest(handler, http.MethodGet, "/general/interfaces", "", &user)
@@ -135,10 +158,23 @@ func TestGeneralAndGroupHandlers(t *testing.T) {
 	if getGroup.Code != http.StatusOK {
 		t.Fatalf("get group code = %d, body = %s", getGroup.Code, getGroup.Body.String())
 	}
-
-	getGroupByName := performRawRequest(handler, http.MethodGet, "/groups/by-name/proxy", "", &user)
-	if getGroupByName.Code != http.StatusOK {
-		t.Fatalf("get group by name code = %d, body = %s", getGroupByName.Code, getGroupByName.Body.String())
+	groupBody := decodeBody(t, getGroup)
+	subscriptions, ok := groupBody["subscriptions"].([]any)
+	if !ok || len(subscriptions) != 1 {
+		t.Fatalf("group subscriptions = %#v", groupBody["subscriptions"])
+	}
+	binding, ok := subscriptions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("group subscription binding = %#v", subscriptions[0])
+	}
+	if _, ok := binding["updatedAt"].(string); !ok {
+		t.Fatalf("group subscription updatedAt = %#v", binding["updatedAt"])
+	}
+	if _, ok := binding["status"].(string); !ok {
+		t.Fatalf("group subscription status = %#v", binding["status"])
+	}
+	if _, ok := binding["info"].(string); !ok {
+		t.Fatalf("group subscription info = %#v", binding["info"])
 	}
 
 	updateGroup := performRawRequest(handler, http.MethodPut, "/groups/"+itoa(groupID), `{"policy":"fixed","policyParams":[]}`, &user)

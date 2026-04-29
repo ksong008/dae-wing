@@ -60,17 +60,16 @@ func TestNodeManagementHandlers(t *testing.T) {
 		t.Fatalf("default independent totalCount = %d, want 2", got)
 	}
 
-	paged := performJSONRequest(t, handler, http.MethodGet, "/nodes?independent=true&first=1", "")
+	paged := performJSONRequest(t, handler, http.MethodGet, "/nodes?independent=true&limit=1", "")
 	if paged.Code != http.StatusOK {
 		t.Fatalf("paged nodes status = %d, body = %s", paged.Code, paged.Body.String())
 	}
 	pagedBody := decodeBody(t, paged)
-	pageInfo := pagedBody["pageInfo"].(map[string]any)
-	if got := pageInfo["hasNextPage"].(bool); !got {
-		t.Fatalf("node pageInfo.hasNextPage = false, want true")
+	nextAfterID, ok := pagedBody["nextAfterId"].(float64)
+	if !ok || nextAfterID == 0 {
+		t.Fatalf("node nextAfterId = %#v, want non-zero", pagedBody["nextAfterId"])
 	}
-	endCursor := pageInfo["endCursor"].(string)
-	nextPage := performJSONRequest(t, handler, http.MethodGet, "/nodes?independent=true&after="+endCursor+"&first=1", "")
+	nextPage := performJSONRequest(t, handler, http.MethodGet, "/nodes?independent=true&afterId="+itoa(int(nextAfterID))+"&limit=1", "")
 	if nextPage.Code != http.StatusOK {
 		t.Fatalf("next page nodes status = %d, body = %s", nextPage.Code, nextPage.Body.String())
 	}
@@ -83,6 +82,24 @@ func TestNodeManagementHandlers(t *testing.T) {
 	latencies := performJSONRequest(t, handler, http.MethodGet, "/nodes/latencies?ids="+itoa(nodeID), "")
 	if latencies.Code != http.StatusOK {
 		t.Fatalf("latency query status = %d, body = %s", latencies.Code, latencies.Body.String())
+	}
+
+	httpNode := db.Node{
+		Link:     "http://user:pass@127.0.0.1:8080#http-node",
+		Name:     "HTTP Node",
+		Address:  "127.0.0.1:8080",
+		Protocol: "http",
+	}
+	if err := db.DB(context.Background()).Create(&httpNode).Error; err != nil {
+		t.Fatalf("seed http node: %v", err)
+	}
+	httpNodeResp := performJSONRequest(t, handler, http.MethodGet, "/nodes/"+itoa(int(httpNode.ID)), "")
+	if httpNodeResp.Code != http.StatusOK {
+		t.Fatalf("get http node status = %d, body = %s", httpNodeResp.Code, httpNodeResp.Body.String())
+	}
+	httpNodeBody := decodeBody(t, httpNodeResp)
+	if got, ok := httpNodeBody["transport"].(string); !ok || got != "http" {
+		t.Fatalf("http node transport = %#v, want http", httpNodeBody["transport"])
 	}
 
 	remove := performJSONRequest(t, handler, http.MethodDelete, "/nodes/"+itoa(nodeID), "")
@@ -159,9 +176,9 @@ func TestSubscriptionManagementHandlers(t *testing.T) {
 	if got := int(subNodesBody["totalCount"].(float64)); got != 2 {
 		t.Fatalf("subscription nodes totalCount = %d, want 2", got)
 	}
-	subPageInfo := subNodesBody["pageInfo"].(map[string]any)
-	if got := subPageInfo["hasNextPage"].(bool); !got {
-		t.Fatalf("subscription nodes pageInfo.hasNextPage = false, want true")
+	subNextAfterID, ok := subNodesBody["nextAfterId"].(float64)
+	if !ok || subNextAfterID == 0 {
+		t.Fatalf("subscription nodes nextAfterId = %#v, want non-zero", subNodesBody["nextAfterId"])
 	}
 
 	update := performJSONRequest(t, handler, http.MethodPut, "/subscriptions/"+itoa(subscriptionID), `{"cronExp":"10 */12 * * *","cronEnable":false}`)

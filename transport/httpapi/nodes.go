@@ -13,6 +13,11 @@ import (
 
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/orchestrator"
+	outboundhttp "github.com/daeuniverse/outbound/dialer/http"
+	"github.com/daeuniverse/outbound/dialer/shadowsocks"
+	"github.com/daeuniverse/outbound/dialer/socks"
+	"github.com/daeuniverse/outbound/dialer/trojan"
+	"github.com/daeuniverse/outbound/dialer/v2ray"
 )
 
 type nodeResource struct {
@@ -21,22 +26,15 @@ type nodeResource struct {
 	Name           string  `json:"name"`
 	Address        string  `json:"address"`
 	Protocol       string  `json:"protocol"`
+	Transport      *string `json:"transport,omitempty"`
 	Tag            *string `json:"tag,omitempty"`
 	SubscriptionID *uint   `json:"subscriptionId,omitempty"`
 }
 
 type nodeListResponse struct {
-	Items       []nodeResource   `json:"items"`
-	Edges       []nodeResource   `json:"edges"`
-	TotalCount  int64            `json:"totalCount"`
-	NextAfterID *uint            `json:"nextAfterId,omitempty"`
-	PageInfo    pageInfoResource `json:"pageInfo"`
-}
-
-type pageInfoResource struct {
-	StartCursor *string `json:"startCursor,omitempty"`
-	EndCursor   *string `json:"endCursor,omitempty"`
-	HasNextPage bool    `json:"hasNextPage"`
+	Items       []nodeResource `json:"items"`
+	TotalCount  int64          `json:"totalCount"`
+	NextAfterID *uint          `json:"nextAfterId,omitempty"`
 }
 
 type nodeImportArgumentRequest struct {
@@ -82,16 +80,8 @@ func handleNodes(rw http.ResponseWriter, r *http.Request) {
 		id, _ := parseOptionalUint(r.URL.Query().Get("id"))
 		subscriptionID, hasSubscriptionID := parseOptionalUint(r.URL.Query().Get("subscriptionId"))
 		independentValue, hasIndependent := parseOptionalBool(r.URL.Query().Get("independent"))
-		afterID, hasAfterID, err := parseAfterCursorQuery(r)
-		if err != nil {
-			writeError(rw, http.StatusBadRequest, err.Error())
-			return
-		}
-		limitValue, err := parseLimitQuery(r)
-		if err != nil {
-			writeError(rw, http.StatusBadRequest, err.Error())
-			return
-		}
+		afterID, hasAfterID := parseOptionalUint(r.URL.Query().Get("afterId"))
+		limitValue := parsePositiveInt(r.URL.Query().Get("limit"), 0)
 
 		var idPtr *uint
 		if id != 0 {
@@ -126,17 +116,14 @@ func handleNodes(rw http.ResponseWriter, r *http.Request) {
 		for _, model := range models {
 			items = append(items, toNodeResource(&model))
 		}
-		pageInfo := pageInfoFromModels(models, limitPtr)
-		response := nodeListResponse{
-			Items:      items,
-			Edges:      items,
-			TotalCount: totalCount,
-			PageInfo:   pageInfo,
-		}
-		if limitPtr != nil && len(models) == *limitPtr {
-			nextAfterID := models[len(models)-1].ID
-			response.NextAfterID = &nextAfterID
-		}
+			response := nodeListResponse{
+				Items:      items,
+				TotalCount: totalCount,
+			}
+			if limitPtr != nil && len(models) == *limitPtr {
+				nextAfterID := models[len(models)-1].ID
+				response.NextAfterID = &nextAfterID
+			}
 		writeJSON(rw, http.StatusOK, response)
 	case http.MethodPost:
 		var req nodeImportRequest
@@ -183,46 +170,6 @@ func handleNodes(rw http.ResponseWriter, r *http.Request) {
 	default:
 		writeMethodNotAllowed(rw, http.MethodGet+", "+http.MethodPost+", "+http.MethodDelete)
 	}
-}
-
-func pageInfoFromModels(models []db.Node, limitPtr *int) pageInfoResource {
-	var pageInfo pageInfoResource
-	if len(models) == 0 {
-		return pageInfo
-	}
-	start := encodeLegacyCursor(models[0].ID)
-	end := encodeLegacyCursor(models[len(models)-1].ID)
-	pageInfo.StartCursor = &start
-	pageInfo.EndCursor = &end
-	if limitPtr != nil && len(models) == *limitPtr {
-		pageInfo.HasNextPage = true
-	}
-	return pageInfo
-}
-
-func parseAfterCursorQuery(r *http.Request) (uint, bool, error) {
-	afterID, hasAfterID := parseOptionalUint(r.URL.Query().Get("afterId"))
-	if hasAfterID {
-		return afterID, true, nil
-	}
-	afterCursor := strings.TrimSpace(r.URL.Query().Get("after"))
-	if afterCursor == "" {
-		return 0, false, nil
-	}
-	decoded, err := decodeLegacyCursor(afterCursor)
-	if err != nil {
-		return 0, false, err
-	}
-	return decoded, true, nil
-}
-
-func parseLimitQuery(r *http.Request) (int, error) {
-	limitValue := parsePositiveInt(r.URL.Query().Get("limit"), 0)
-	if limitValue > 0 {
-		return limitValue, nil
-	}
-	firstValue := parsePositiveInt(r.URL.Query().Get("first"), 0)
-	return firstValue, nil
 }
 
 func handleNodeResource(rw http.ResponseWriter, r *http.Request) {
@@ -314,8 +261,82 @@ func toNodeResource(model *db.Node) nodeResource {
 		Name:           model.Name,
 		Address:        model.Address,
 		Protocol:       model.Protocol,
+		Transport:      deriveNodeTransport(model.Link, model.Protocol),
 		Tag:            model.Tag,
 		SubscriptionID: model.SubscriptionID,
+	}
+}
+
+func deriveNodeTransport(link string, protocol string) *string {
+	switch protocol {
+	case "http", "https", "socks5":
+		return &protocol
+	}
+
+	switch {
+	case strings.HasPrefix(link, "vmess://"), strings.HasPrefix(link, "vless://"):
+		parsed, err := parseV2RayTransport(link)
+		if err == nil && parsed != "" {
+			return &parsed
+		}
+	case strings.HasPrefix(link, "trojan://"), strings.HasPrefix(link, "trojan-go://"):
+		parsed, err := trojan.ParseTrojanURL(link)
+		if err == nil && parsed.Type == "ws" {
+			transport := "ws"
+			return &transport
+		}
+	case strings.HasPrefix(link, "ss://"), strings.HasPrefix(link, "shadowsocks://"):
+		parsed, err := shadowsocks.ParseSSURL(link)
+		if err == nil {
+			if parsed.Plugin.Name == "v2ray-plugin" && parsed.Plugin.Opts.Obfs != "" {
+				transport := parsed.Plugin.Opts.Obfs
+				return &transport
+			}
+			if parsed.Plugin.Name != "" {
+				transport := parsed.Plugin.Name
+				return &transport
+			}
+		}
+	case strings.HasPrefix(link, "http://"), strings.HasPrefix(link, "https://"):
+		parsed, err := outboundhttp.ParseHTTPURL(link)
+		if err == nil && parsed.Protocol != "" {
+			transport := parsed.Protocol
+			return &transport
+		}
+	case strings.HasPrefix(link, "socks://"), strings.HasPrefix(link, "socks5://"):
+		parsed, err := socks.ParseSocksURL(link)
+		if err == nil && parsed.Protocol != "" {
+			transport := parsed.Protocol
+			return &transport
+		}
+	}
+
+	return nil
+}
+
+func parseV2RayTransport(link string) (string, error) {
+	var (
+		parsed *v2ray.V2Ray
+		err    error
+	)
+	switch {
+	case strings.HasPrefix(link, "vmess://"):
+		parsed, err = v2ray.ParseVmessURL(link)
+	case strings.HasPrefix(link, "vless://"):
+		parsed, err = v2ray.ParseVlessURL(link)
+	default:
+		return "", nil
+	}
+	if err != nil || parsed == nil {
+		return "", err
+	}
+	switch parsed.Net {
+	case "http", "http2":
+		return "h2", nil
+	case "websocket":
+		return "ws", nil
+	default:
+		return parsed.Net, nil
 	}
 }
 

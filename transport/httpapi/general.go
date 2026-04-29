@@ -20,11 +20,8 @@ type runtimeStateResource struct {
 type interfaceResource struct {
 	Name          string                 `json:"name"`
 	Index         int32                  `json:"index"`
-	IfIndex       int32                  `json:"ifindex"`
 	Up            bool                   `json:"up"`
-	Flag          interfaceFlagResource  `json:"flag"`
 	Addresses     []string               `json:"addresses"`
-	IP            []string               `json:"ip"`
 	DefaultRoutes []defaultRouteResource `json:"defaultRoutes,omitempty"`
 }
 
@@ -81,21 +78,10 @@ func handleGeneralInterfaces(rw http.ResponseWriter, r *http.Request) {
 		items = append(items, interfaceResource{
 			Name:          iface.Name,
 			Index:         iface.Index,
-			IfIndex:       iface.Index,
 			Up:            iface.Up,
-			Flag:          interfaceFlagResource{Up: iface.Up, Default: routes},
 			Addresses:     iface.Addresses,
-			IP:            iface.Addresses,
 			DefaultRoutes: routes,
 		})
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{"items": items})
-}
-
-func handleGeneralSchema(rw http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(rw, http.MethodGet)
-		return
-	}
-	writeJSON(rw, http.StatusOK, OpenAPIDocument())
 }

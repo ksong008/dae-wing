@@ -88,10 +88,8 @@ func openAPIPaths() map[string]any {
 		"/api/dns/{id}":                  resourceItemPath("dns resource", "DNSResource", "DNSUpdateRequest"),
 		"/api/dns/{id}/select":           resourceSelectPath("dns resource"),
 		"/api/general/interfaces":        generalInterfacesPath(),
-		"/api/general/schema":            generalSchemaPath(),
 		"/api/general/state":             generalStatePath(),
 		"/api/groups":                    groupCollectionPath(),
-		"/api/groups/by-name/{name}":     groupByNamePath(),
 		"/api/groups/{id}":               groupItemPath(),
 		"/api/groups/{id}/nodes":         groupNodesPath(),
 		"/api/groups/{id}/subscriptions": groupSubscriptionsPath(),
@@ -129,6 +127,39 @@ func openAPIPaths() map[string]any {
 					"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("UserPatchRequest")}},
 				},
 				"responses": map[string]any{"200": jsonResponse("User updated.", "UserResource")},
+			},
+		},
+		"/api/user/me/default-resources": map[string]any{
+			"post": map[string]any{
+				"summary":     "Ensure current user default resources",
+				"description": "Ensures default config, routing, dns, group, and mode values for the authenticated user and persists them into JSON storage.",
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":     "object",
+								"required": []string{"configName", "global", "dnsName", "dns", "routingName", "routing", "groupName", "policy", "policyParams", "mode"},
+								"properties": map[string]any{
+									"configName":  map[string]any{"type": "string"},
+									"global":      parsedGlobalSchema(),
+									"dnsName":     map[string]any{"type": "string"},
+									"dns":         map[string]any{"type": "string"},
+									"routingName": map[string]any{"type": "string"},
+									"routing":     map[string]any{"type": "string"},
+									"groupName":   map[string]any{"type": "string"},
+									"policy":      map[string]any{"type": "string"},
+									"policyParams": map[string]any{
+										"type":  "array",
+										"items": schemaRef("ParamResource"),
+									},
+									"mode": map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{"200": jsonResponse("Default resources ensured.", "EnsureDefaultResourcesResponse")},
 			},
 		},
 		"/api/user/me/password": map[string]any{
@@ -276,6 +307,9 @@ func openAPISchemas() map[string]any {
 				"downloadTotal":     map[string]any{"type": "string"},
 				"activeConnections": map[string]any{"type": "integer"},
 				"udpSessions":       map[string]any{"type": "integer"},
+				"rssBytes":          map[string]any{"type": "string"},
+				"heapAllocBytes":    map[string]any{"type": "string"},
+				"goroutines":        map[string]any{"type": "integer"},
 				"samples": map[string]any{
 					"type":  "array",
 					"items": schemaRef("RuntimeTrafficSample"),
@@ -345,6 +379,16 @@ func openAPISchemas() map[string]any {
 			"properties": map[string]any{
 				"updated": map[string]any{"type": "integer"},
 				"removed": map[string]any{"type": "integer"},
+			},
+		},
+		"EnsureDefaultResourcesResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"defaultConfigID":  map[string]any{"type": "string"},
+				"defaultRoutingID": map[string]any{"type": "string"},
+				"defaultDNSID":     map[string]any{"type": "string"},
+				"defaultGroupID":   map[string]any{"type": "string"},
+				"mode":             map[string]any{"type": "string"},
 			},
 		},
 		"ParamResource": map[string]any{
@@ -447,6 +491,9 @@ func openAPISchemas() map[string]any {
 				"nameFilterRegex": map[string]any{"type": "string"},
 				"matchedCount":    map[string]any{"type": "integer"},
 				"matchedNodes":    map[string]any{"type": "array", "items": schemaRef("NodeResource")},
+				"updatedAt":       map[string]any{"type": "string", "format": "date-time"},
+				"status":          map[string]any{"type": "string"},
+				"info":            map[string]any{"type": "string"},
 				"link":            map[string]any{"type": "string"},
 				"tag":             map[string]any{"type": "string"},
 			},
@@ -460,22 +507,12 @@ func openAPISchemas() map[string]any {
 			"properties": map[string]any{
 				"name":          map[string]any{"type": "string"},
 				"index":         map[string]any{"type": "integer"},
-				"ifindex":       map[string]any{"type": "integer"},
 				"up":            map[string]any{"type": "boolean"},
 				"addresses":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"ip":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"flag":          schemaRef("InterfaceFlagResource"),
 				"defaultRoutes": map[string]any{"type": "array", "items": schemaRef("DefaultRouteResource")},
 			},
 		},
 		"InterfaceList": map[string]any{"type": "object", "properties": map[string]any{"items": map[string]any{"type": "array", "items": schemaRef("InterfaceResource")}}},
-		"InterfaceFlagResource": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"up":      map[string]any{"type": "boolean"},
-				"default": map[string]any{"type": "array", "items": schemaRef("DefaultRouteResource")},
-			},
-		},
 		"DefaultRouteResource": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -494,7 +531,6 @@ func openAPISchemas() map[string]any {
 		},
 		"NodeResource":              nodeSchema(),
 		"NodeList":                  nodeListSchema(),
-		"PageInfo":                  pageInfoSchema(),
 		"NodeImportRequest":         nodeImportRequestSchema(),
 		"NodeImportResult":          nodeImportResultSchema(),
 		"NodeImportResultList":      map[string]any{"type": "object", "properties": map[string]any{"items": map[string]any{"type": "array", "items": schemaRef("NodeImportResult")}}},
@@ -838,15 +874,13 @@ func nodeCollectionPath() map[string]any {
 	return map[string]any{
 		"get": map[string]any{
 			"summary":     "List nodes",
-			"description": "Returns nodes with optional filters for id, subscription, independent state, and simple cursor pagination. When neither `subscriptionId` nor `independent` is provided, the result defaults to independent nodes only for GraphQL parity.",
+			"description": "Returns nodes with optional filters for id, subscription, independent state, and simple pagination.",
 			"parameters": []map[string]any{
 				{"name": "id", "in": "query", "schema": map[string]any{"type": "integer"}},
 				{"name": "subscriptionId", "in": "query", "schema": map[string]any{"type": "integer"}},
 				{"name": "independent", "in": "query", "schema": map[string]any{"type": "boolean"}},
 				{"name": "afterId", "in": "query", "schema": map[string]any{"type": "integer"}},
-				{"name": "after", "in": "query", "schema": map[string]any{"type": "string"}},
 				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer"}},
-				{"name": "first", "in": "query", "schema": map[string]any{"type": "integer"}},
 			},
 			"responses": map[string]any{
 				"200": jsonResponse("Node list.", "NodeList"),
@@ -1019,9 +1053,7 @@ func subscriptionNodesPath() map[string]any {
 			"parameters": []map[string]any{
 				idPathParameter(),
 				{"name": "afterId", "in": "query", "schema": map[string]any{"type": "integer"}},
-				{"name": "after", "in": "query", "schema": map[string]any{"type": "string"}},
 				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer"}},
-				{"name": "first", "in": "query", "schema": map[string]any{"type": "integer"}},
 			},
 			"responses": map[string]any{
 				"200": jsonResponse("Subscription nodes.", "NodeList"),
@@ -1039,6 +1071,7 @@ func nodeSchema() map[string]any {
 			"name":           map[string]any{"type": "string"},
 			"address":        map[string]any{"type": "string"},
 			"protocol":       map[string]any{"type": "string"},
+			"transport":      map[string]any{"type": "string"},
 			"tag":            map[string]any{"type": "string"},
 			"subscriptionId": map[string]any{"type": "integer"},
 		},
@@ -1050,21 +1083,8 @@ func nodeListSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"items":       map[string]any{"type": "array", "items": schemaRef("NodeResource")},
-			"edges":       map[string]any{"type": "array", "items": schemaRef("NodeResource")},
 			"totalCount":  map[string]any{"type": "integer"},
 			"nextAfterId": map[string]any{"type": "integer"},
-			"pageInfo":    schemaRef("PageInfo"),
-		},
-	}
-}
-
-func pageInfoSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"startCursor": map[string]any{"type": "string"},
-			"endCursor":   map[string]any{"type": "string"},
-			"hasNextPage": map[string]any{"type": "boolean"},
 		},
 	}
 }
@@ -1183,25 +1203,6 @@ func generalStatePath() map[string]any {
 	}
 }
 
-func generalSchemaPath() map[string]any {
-	return map[string]any{
-		"get": map[string]any{
-			"summary":     "Read control-plane schema document",
-			"description": "Returns the current OpenAPI document for clients that previously relied on GraphQL schema discovery.",
-			"responses": map[string]any{
-				"200": map[string]any{
-					"description": "OpenAPI document.",
-					"content": map[string]any{
-						"application/json": map[string]any{
-							"schema": map[string]any{"type": "object", "additionalProperties": true},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
 func generalInterfacesPath() map[string]any {
 	return map[string]any{
 		"get": map[string]any{
@@ -1235,21 +1236,6 @@ func groupCollectionPath() map[string]any {
 				"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("GroupCreateRequest")}},
 			},
 			"responses": map[string]any{"201": jsonResponse("Group created.", "GroupResource")},
-		},
-	}
-}
-
-func groupByNamePath() map[string]any {
-	return map[string]any{
-		"get": map[string]any{
-			"summary":     "Get group by name",
-			"description": "Returns one group by its unique name.",
-			"parameters": []map[string]any{
-				{"name": "name", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
-			},
-			"responses": map[string]any{
-				"200": jsonResponse("Group found.", "GroupResource"),
-			},
 		},
 	}
 }
