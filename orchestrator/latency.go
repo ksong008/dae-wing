@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -19,7 +20,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const latencyProbeConcurrency = 8
+const (
+	latencyProbeConcurrency = 8
+	nodeLatencyCacheTTL     = time.Hour
+	nodeLatencyCacheMaxSize = 4096
+)
 
 type NodeLatencyResult struct {
 	NodeID    uint
@@ -36,6 +41,37 @@ var nodeLatencyCache = struct {
 	items     map[uint]*NodeLatencyResult
 }{
 	items: map[uint]*NodeLatencyResult{},
+}
+
+func pruneNodeLatencyCacheLocked(now time.Time) {
+	for id, result := range nodeLatencyCache.items {
+		if result == nil || result.TestedAt.IsZero() || result.TestedAt.Add(nodeLatencyCacheTTL).Before(now) {
+			delete(nodeLatencyCache.items, id)
+		}
+	}
+
+	if len(nodeLatencyCache.items) <= nodeLatencyCacheMaxSize {
+		return
+	}
+
+	type cacheEntry struct {
+		id       uint
+		testedAt time.Time
+	}
+	entries := make([]cacheEntry, 0, len(nodeLatencyCache.items))
+	for id, result := range nodeLatencyCache.items {
+		testedAt := time.Time{}
+		if result != nil {
+			testedAt = result.TestedAt
+		}
+		entries = append(entries, cacheEntry{id: id, testedAt: testedAt})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].testedAt.Before(entries[j].testedAt)
+	})
+	for i := 0; i < len(entries)-nodeLatencyCacheMaxSize; i++ {
+		delete(nodeLatencyCache.items, entries[i].id)
+	}
 }
 
 func QueryNodeLatencies(ctx context.Context, ids []uint) ([]*NodeLatencyResult, error) {
@@ -109,6 +145,7 @@ func storeNodeLatencyResults(results []*NodeLatencyResult) {
 		}
 		nodeLatencyCache.items[result.NodeID] = cloneNodeLatencyResult(result)
 	}
+	pruneNodeLatencyCacheLocked(nodeLatencyCache.updatedAt)
 }
 
 func replaceNodeLatencyResults(results []*NodeLatencyResult) {
@@ -123,6 +160,7 @@ func replaceNodeLatencyResults(results []*NodeLatencyResult) {
 		}
 		nodeLatencyCache.items[result.NodeID] = cloneNodeLatencyResult(result)
 	}
+	pruneNodeLatencyCacheLocked(nodeLatencyCache.updatedAt)
 }
 
 func removeNodeLatencyResults(ids []uint) {
@@ -138,12 +176,32 @@ func removeNodeLatencyResults(ids []uint) {
 
 func snapshotCachedNodeLatencyResults() map[uint]*NodeLatencyResult {
 	nodeLatencyCache.mu.RLock()
-	defer nodeLatencyCache.mu.RUnlock()
+	prunedNeeded := false
+	size := len(nodeLatencyCache.items)
+	now := time.Now()
+	for _, result := range nodeLatencyCache.items {
+		if result == nil || result.TestedAt.IsZero() || result.TestedAt.Add(nodeLatencyCacheTTL).Before(now) {
+			prunedNeeded = true
+			break
+		}
+	}
+	if !prunedNeeded && size <= nodeLatencyCacheMaxSize {
+		results := make(map[uint]*NodeLatencyResult, len(nodeLatencyCache.items))
+		for id, result := range nodeLatencyCache.items {
+			results[id] = cloneNodeLatencyResult(result)
+		}
+		nodeLatencyCache.mu.RUnlock()
+		return results
+	}
+	nodeLatencyCache.mu.RUnlock()
 
+	nodeLatencyCache.mu.Lock()
+	pruneNodeLatencyCacheLocked(now)
 	results := make(map[uint]*NodeLatencyResult, len(nodeLatencyCache.items))
 	for id, result := range nodeLatencyCache.items {
 		results[id] = cloneNodeLatencyResult(result)
 	}
+	nodeLatencyCache.mu.Unlock()
 	return results
 }
 

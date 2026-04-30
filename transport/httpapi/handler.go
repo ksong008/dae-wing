@@ -6,13 +6,10 @@
 package httpapi
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"runtime"
 	"strconv"
 	"time"
 
@@ -265,7 +262,6 @@ func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewR
 			DownloadRate: strconv.FormatUint(sample.DownloadRate, 10),
 		})
 	}
-	rssBytes, heapAllocBytes, goroutines := currentProcessStats()
 	return runtimeOverviewResponse{
 		UpdatedAt:         overview.UpdatedAt.Format(time.RFC3339Nano),
 		UploadRate:        strconv.FormatUint(overview.UploadRate, 10),
@@ -274,32 +270,11 @@ func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewR
 		DownloadTotal:     strconv.FormatUint(overview.DownloadTotal, 10),
 		ActiveConnections: overview.ActiveConnections,
 		UDPSessions:       overview.UDPSessions,
-		RSSBytes:          strconv.FormatUint(rssBytes, 10),
-		HeapAllocBytes:    strconv.FormatUint(heapAllocBytes, 10),
-		Goroutines:        goroutines,
+		RSSBytes:          strconv.FormatUint(overview.RSSBytes, 10),
+		HeapAllocBytes:    strconv.FormatUint(overview.HeapAllocBytes, 10),
+		Goroutines:        overview.Goroutines,
 		Samples:           samples,
 	}
-}
-
-func currentProcessStats() (rssBytes uint64, heapAllocBytes uint64, goroutines int) {
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-	heapAllocBytes = memStats.HeapAlloc
-	goroutines = runtime.NumGoroutine()
-
-	data, err := os.ReadFile("/proc/self/statm")
-	if err != nil {
-		return 0, heapAllocBytes, goroutines
-	}
-	fields := bytes.Fields(data)
-	if len(fields) < 2 {
-		return 0, heapAllocBytes, goroutines
-	}
-	residentPages, err := strconv.ParseUint(string(fields[1]), 10, 64)
-	if err != nil {
-		return 0, heapAllocBytes, goroutines
-	}
-	return residentPages * uint64(os.Getpagesize()), heapAllocBytes, goroutines
 }
 
 func decodeJSONBody(r *http.Request, dst any) error {
