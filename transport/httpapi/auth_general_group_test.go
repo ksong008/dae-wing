@@ -127,6 +127,18 @@ func TestGeneralAndGroupHandlers(t *testing.T) {
 		t.Fatalf("general interfaces code = %d, body = %s", interfaces.Code, interfaces.Body.String())
 	}
 
+	cacheStats := performRawRequest(handler, http.MethodGet, "/general/cache-stats", "", &user)
+	if cacheStats.Code != http.StatusOK {
+		t.Fatalf("cache stats code = %d, body = %s", cacheStats.Code, cacheStats.Body.String())
+	}
+	cacheStatsBody := decodeBody(t, cacheStats)
+	if _, ok := cacheStatsBody["dnsCacheEntries"].(float64); !ok {
+		t.Fatalf("dnsCacheEntries = %#v", cacheStatsBody["dnsCacheEntries"])
+	}
+	if _, ok := cacheStatsBody["nodeLatencyCacheEntries"].(float64); !ok {
+		t.Fatalf("nodeLatencyCacheEntries = %#v", cacheStatsBody["nodeLatencyCacheEntries"])
+	}
+
 	subTag := "sub"
 	sub := db.Subscription{Link: "https://example.invalid/sub", Tag: &subTag, CronExp: "10 */6 * * *", CronEnable: true}
 	if err := db.DB(context.Background()).Create(&sub).Error; err != nil {

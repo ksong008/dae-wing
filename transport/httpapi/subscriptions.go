@@ -16,15 +16,16 @@ import (
 )
 
 type subscriptionResource struct {
-	ID         uint    `json:"id"`
-	UpdatedAt  string  `json:"updatedAt"`
-	Link       string  `json:"link"`
-	CronExp    string  `json:"cronExp"`
-	CronEnable bool    `json:"cronEnable"`
-	Status     string  `json:"status"`
-	Info       string  `json:"info"`
-	Tag        *string `json:"tag,omitempty"`
-	NodeCount  int64   `json:"nodeCount"`
+	ID         uint              `json:"id"`
+	UpdatedAt  string            `json:"updatedAt"`
+	Link       string            `json:"link"`
+	CronExp    string            `json:"cronExp"`
+	CronEnable bool              `json:"cronEnable"`
+	Status     string            `json:"status"`
+	Info       string            `json:"info"`
+	Tag        *string           `json:"tag,omitempty"`
+	NodeCount  int64             `json:"nodeCount"`
+	Nodes      *nodeListResponse `json:"nodes,omitempty"`
 }
 
 type subscriptionCreateRequest struct {
@@ -50,6 +51,7 @@ func handleSubscriptions(rw http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		id, hasID := parseOptionalUint(r.URL.Query().Get("id"))
+		expandNodes := hasExpandValue(r.URL.Query().Get("expand"), "nodes")
 		var idPtr *uint
 		if hasID {
 			idPtr = &id
@@ -64,9 +66,22 @@ func handleSubscriptions(rw http.ResponseWriter, r *http.Request) {
 			writeError(rw, http.StatusInternalServerError, err.Error())
 			return
 		}
+		nodesBySubscriptionID := map[uint]nodeListResponse{}
+		if expandNodes {
+			nodesBySubscriptionID, err = subscriptionNodesByIDs(r.Context(), subscriptionIDs(models))
+			if err != nil {
+				writeError(rw, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 		items := make([]subscriptionResource, 0, len(models))
 		for _, model := range models {
-			items = append(items, toSubscriptionResource(&model, counts[model.ID]))
+			resource := toSubscriptionResource(&model, counts[model.ID])
+			if expandNodes {
+				nodes := nodesBySubscriptionID[model.ID]
+				resource.Nodes = &nodes
+			}
+			items = append(items, resource)
 		}
 		writeJSON(rw, http.StatusOK, map[string]any{"items": items})
 	case http.MethodPost:
@@ -289,6 +304,48 @@ func subscriptionNodeCounts(ctx context.Context, ids []uint) (map[uint]int64, er
 		counts[row.SubscriptionID] = row.Count
 	}
 	return counts, nil
+}
+
+func subscriptionNodesByIDs(ctx context.Context, ids []uint) (map[uint]nodeListResponse, error) {
+	results := make(map[uint]nodeListResponse, len(ids))
+	if len(ids) == 0 {
+		return results, nil
+	}
+
+	for _, id := range ids {
+		results[id] = nodeListResponse{
+			Items:      []nodeResource{},
+			TotalCount: 0,
+		}
+	}
+
+	var models []db.Node
+	if err := db.DB(ctx).
+		Where("subscription_id in ?", ids).
+		Order("id asc").
+		Find(&models).Error; err != nil {
+		return nil, err
+	}
+
+	for _, model := range models {
+		if model.SubscriptionID == nil {
+			continue
+		}
+		response := results[*model.SubscriptionID]
+		response.Items = append(response.Items, toNodeResource(&model))
+		response.TotalCount++
+		results[*model.SubscriptionID] = response
+	}
+	return results, nil
+}
+
+func hasExpandValue(raw string, target string) bool {
+	for _, part := range strings.Split(raw, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseResourceActionPath(path string, resource string, action string) (uint, bool) {

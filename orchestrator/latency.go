@@ -441,6 +441,13 @@ func mapsNodeLatencyValues(items map[uint]*NodeLatencyResult) []*NodeLatencyResu
 	return results
 }
 
+func NodeLatencyCacheStats() (entries int, updatedAt time.Time) {
+	nodeLatencyCache.mu.Lock()
+	defer nodeLatencyCache.mu.Unlock()
+	pruneNodeLatencyCacheLocked(time.Now())
+	return len(nodeLatencyCache.items), nodeLatencyCache.updatedAt
+}
+
 func stringPtr(value string) *string {
 	return &value
 }

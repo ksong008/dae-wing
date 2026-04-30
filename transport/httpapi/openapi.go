@@ -89,6 +89,7 @@ func openAPIPaths() map[string]any {
 		"/api/dns/{id}/select":           resourceSelectPath("dns resource"),
 		"/api/general/interfaces":        generalInterfacesPath(),
 		"/api/general/state":             generalStatePath(),
+		"/api/general/cache-stats":       generalCacheStatsPath(),
 		"/api/groups":                    groupCollectionPath(),
 		"/api/groups/{id}":               groupItemPath(),
 		"/api/groups/{id}/nodes":         groupNodesPath(),
@@ -545,6 +546,21 @@ func openAPISchemas() map[string]any {
 				"version":  map[string]any{"type": "string"},
 			},
 		},
+		"CacheStatsResource": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"realDomainCacheEntries":   map[string]any{"type": "integer"},
+				"dnsCacheEntries":          map[string]any{"type": "integer"},
+				"dnsForwarderCacheEntries": map[string]any{"type": "integer"},
+				"udpEndpointPoolEntries":   map[string]any{"type": "integer"},
+				"anyfromPoolEntries":       map[string]any{"type": "integer"},
+				"packetSnifferEntries":     map[string]any{"type": "integer"},
+				"udpTaskQueueEntries":      map[string]any{"type": "integer"},
+				"udpTaskDropTotal":         map[string]any{"type": "integer"},
+				"activeTCPConnections":     map[string]any{"type": "integer"},
+				"nodeLatencyCacheEntries":  map[string]any{"type": "integer"},
+			},
+		},
 		"NodeResource":              nodeSchema(),
 		"NodeList":                  nodeListSchema(),
 		"NodeImportRequest":         nodeImportRequestSchema(),
@@ -998,9 +1014,10 @@ func subscriptionCollectionPath() map[string]any {
 	return map[string]any{
 		"get": map[string]any{
 			"summary":     "List subscriptions",
-			"description": "Returns subscriptions with node counts. Optional `id` query filters to one row.",
+			"description": "Returns subscriptions with node counts. Optional `id` query filters to one row. Optional `expand=nodes` embeds full node lists.",
 			"parameters": []map[string]any{
 				{"name": "id", "in": "query", "schema": map[string]any{"type": "integer"}},
+				{"name": "expand", "in": "query", "schema": map[string]any{"type": "string"}},
 			},
 			"responses": map[string]any{"200": jsonResponse("Subscription list.", "SubscriptionList")},
 		},
@@ -1171,6 +1188,7 @@ func subscriptionSchema() map[string]any {
 			"info":       map[string]any{"type": "string"},
 			"tag":        map[string]any{"type": "string"},
 			"nodeCount":  map[string]any{"type": "integer"},
+			"nodes":      schemaRef("NodeList"),
 		},
 	}
 }
@@ -1229,6 +1247,16 @@ func generalInterfacesPath() map[string]any {
 				{"name": "onlyGlobalScope", "in": "query", "schema": map[string]any{"type": "boolean"}},
 			},
 			"responses": map[string]any{"200": jsonResponse("Interface list.", "InterfaceList")},
+		},
+	}
+}
+
+func generalCacheStatsPath() map[string]any {
+	return map[string]any{
+		"get": map[string]any{
+			"summary":     "Read cache stats",
+			"description": "Returns lightweight cache and queue counts for the active control plane.",
+			"responses":   map[string]any{"200": jsonResponse("Cache stats.", "CacheStatsResource")},
 		},
 	}
 }

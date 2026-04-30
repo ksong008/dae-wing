@@ -8,6 +8,7 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/daeuniverse/dae-wing/engine"
 	"github.com/daeuniverse/dae-wing/orchestrator"
 )
 
@@ -15,6 +16,19 @@ type runtimeStateResource struct {
 	Running  bool   `json:"running"`
 	Modified bool   `json:"modified"`
 	Version  string `json:"version"`
+}
+
+type cacheStatsResource struct {
+	RealDomainCacheEntries   int    `json:"realDomainCacheEntries"`
+	DnsCacheEntries          int    `json:"dnsCacheEntries"`
+	DnsForwarderCacheEntries int    `json:"dnsForwarderCacheEntries"`
+	UdpEndpointPoolEntries   int    `json:"udpEndpointPoolEntries"`
+	AnyfromPoolEntries       int    `json:"anyfromPoolEntries"`
+	PacketSnifferEntries     int    `json:"packetSnifferEntries"`
+	UdpTaskQueueEntries      int    `json:"udpTaskQueueEntries"`
+	UdpTaskDropTotal         uint64 `json:"udpTaskDropTotal"`
+	ActiveTCPConnections     int    `json:"activeTCPConnections"`
+	NodeLatencyCacheEntries  int    `json:"nodeLatencyCacheEntries"`
 }
 
 type interfaceResource struct {
@@ -84,4 +98,33 @@ func handleGeneralInterfaces(rw http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{"items": items})
+}
+
+func handleGeneralCacheStats(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(rw, http.MethodGet)
+		return
+	}
+
+	cacheStats := cacheStatsResource{}
+	if ctl, err := engine.Default().ControlPlane(); err == nil {
+		stats := ctl.CacheStats()
+		cacheStats.RealDomainCacheEntries = stats.RealDomainCacheEntries
+		cacheStats.DnsCacheEntries = stats.DnsCacheEntries
+		cacheStats.DnsForwarderCacheEntries = stats.DnsForwarderCacheEntries
+		cacheStats.UdpEndpointPoolEntries = stats.UdpEndpointPoolEntries
+		cacheStats.AnyfromPoolEntries = stats.AnyfromPoolEntries
+		cacheStats.PacketSnifferEntries = stats.PacketSnifferEntries
+		cacheStats.UdpTaskQueueEntries = stats.UdpTaskQueueEntries
+		cacheStats.UdpTaskDropTotal = stats.UdpTaskDropTotal
+		cacheStats.ActiveTCPConnections = stats.ActiveTCPConnections
+	} else if !engine.Default().IsControlPlaneNotInit(err) {
+		writeError(rw, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	nodeLatencyEntries, _ := orchestrator.NodeLatencyCacheStats()
+	cacheStats.NodeLatencyCacheEntries = nodeLatencyEntries
+
+	writeJSON(rw, http.StatusOK, cacheStats)
 }

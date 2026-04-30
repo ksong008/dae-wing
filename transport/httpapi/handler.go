@@ -74,6 +74,7 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/auth/users", handleAuthUsers)
 	mux.HandleFunc("/general/interfaces", requireAuth(handleGeneralInterfaces))
 	mux.HandleFunc("/general/state", requireAuth(handleGeneralState))
+	mux.HandleFunc("/general/cache-stats", requireAuth(handleGeneralCacheStats))
 	mux.HandleFunc("/openapi.json", handleOpenAPI)
 	mux.HandleFunc("/configs", requireAuth(handleConfigs))
 	mux.HandleFunc("/configs/", requireAuth(handleConfigResource))

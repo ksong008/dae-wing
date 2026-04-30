@@ -163,6 +163,20 @@ func TestSubscriptionManagementHandlers(t *testing.T) {
 		t.Fatalf("subscription nodeCount = %d, want 2", got)
 	}
 
+	expandedList := performJSONRequest(t, handler, http.MethodGet, "/subscriptions?expand=nodes", "")
+	if expandedList.Code != http.StatusOK {
+		t.Fatalf("expanded list subscriptions status = %d, body = %s", expandedList.Code, expandedList.Body.String())
+	}
+	expandedListBody := decodeBody(t, expandedList)
+	expandedItems := expandedListBody["items"].([]any)
+	nodes, ok := expandedItems[0].(map[string]any)["nodes"].(map[string]any)
+	if !ok {
+		t.Fatalf("subscription nodes payload = %#v", expandedItems[0].(map[string]any)["nodes"])
+	}
+	if got := int(nodes["totalCount"].(float64)); got != 2 {
+		t.Fatalf("expanded subscription nodes totalCount = %d, want 2", got)
+	}
+
 	get := performJSONRequest(t, handler, http.MethodGet, "/subscriptions/"+itoa(subscriptionID), "")
 	if get.Code != http.StatusOK {
 		t.Fatalf("get subscription status = %d, body = %s", get.Code, get.Body.String())
