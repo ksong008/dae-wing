@@ -38,6 +38,11 @@ jobs:
         with:
           go-version: '1.24.3'
           cache: false
+      - name: Prepare generated deps
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: make deps
       - name: Run focused HTTP API tests
         env:
           GOPROXY: https://goproxy.cn,direct
