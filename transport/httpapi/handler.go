@@ -25,7 +25,6 @@ const (
 	defaultOverviewWindowSec = 60
 	defaultOverviewMaxPoints = 16
 	defaultStopTimeout       = 10 * time.Second
-	streamInterval           = 3 * time.Second
 	streamHeartbeatInterval  = 15 * time.Second
 )
 
@@ -217,7 +216,7 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	streamTicker := time.NewTicker(streamInterval)
+	streamTicker := time.NewTicker(runtimeOverviewStreamInterval(windowSec))
 	defer streamTicker.Stop()
 	heartbeatTicker := time.NewTicker(streamHeartbeatInterval)
 	defer heartbeatTicker.Stop()
@@ -242,6 +241,19 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 func runtimeOverviewQueryValues(r *http.Request) (windowSec int, maxPoints int) {
 	return parsePositiveInt(r.URL.Query().Get("windowSec"), defaultOverviewWindowSec),
 		parsePositiveInt(r.URL.Query().Get("maxPoints"), defaultOverviewMaxPoints)
+}
+
+func runtimeOverviewStreamInterval(windowSec int) time.Duration {
+	if windowSec <= 60 {
+		return time.Second
+	}
+	if windowSec <= 10*60 {
+		return 2 * time.Second
+	}
+	if windowSec <= 30*60 {
+		return 5 * time.Second
+	}
+	return 10 * time.Second
 }
 
 func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewResponse {
