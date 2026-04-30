@@ -1,0 +1,25 @@
+name: Transport Surface Lint
+
+on:
+  pull_request:
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "README.md"
+      - "THREE_LAYER_REFACTOR.md"
+      - "cmd/**"
+      - "engine/**"
+      - "orchestrator/**"
+      - "transport/**"
+      - "scripts/check_retired_transport_markers.sh"
+      - ".github/workflows/transport-surface-lint.yml"
+
+jobs:
+  transport-surface-lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Check retired transport markers
+        run: make transport-surface-lint

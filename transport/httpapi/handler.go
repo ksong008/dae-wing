@@ -128,8 +128,7 @@ func handleRuntimeOverview(rw http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(rw, http.MethodGet)
 		return
 	}
-	windowSec := parsePositiveInt(r.URL.Query().Get("windowSec"), defaultOverviewWindowSec)
-	maxPoints := parsePositiveInt(r.URL.Query().Get("maxPoints"), defaultOverviewMaxPoints)
+	windowSec, maxPoints := runtimeOverviewQueryValues(r)
 
 	overview, err := engine.Default().GetRuntimeOverview(windowSec, maxPoints)
 	if err != nil {
@@ -190,6 +189,7 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(rw, http.MethodGet)
 		return
 	}
+	windowSec, maxPoints := runtimeOverviewQueryValues(r)
 
 	flusher, ok := rw.(http.Flusher)
 	if !ok {
@@ -206,7 +206,7 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	sendOverviewEvent := func() bool {
-		overview, err := engine.Default().GetRuntimeOverview(defaultOverviewWindowSec, defaultOverviewMaxPoints)
+		overview, err := engine.Default().GetRuntimeOverview(windowSec, maxPoints)
 		if err != nil {
 			return writeSSE(rw, flusher, "runtime.error", map[string]string{"error": err.Error()})
 		}
@@ -237,6 +237,11 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func runtimeOverviewQueryValues(r *http.Request) (windowSec int, maxPoints int) {
+	return parsePositiveInt(r.URL.Query().Get("windowSec"), defaultOverviewWindowSec),
+		parsePositiveInt(r.URL.Query().Get("maxPoints"), defaultOverviewMaxPoints)
 }
 
 func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewResponse {

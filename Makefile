@@ -81,3 +81,7 @@ emoji-lint:
 	./scripts/check_no_emoji.sh
 	cd dae-core && ./scripts/check_no_emoji.sh
 .PHONY: emoji-lint
+
+transport-surface-lint:
+	./scripts/check_retired_transport_markers.sh
+.PHONY: transport-surface-lint

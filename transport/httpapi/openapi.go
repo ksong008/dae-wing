@@ -205,20 +205,7 @@ func openAPIPaths() map[string]any {
 			"get": map[string]any{
 				"summary":     "Read runtime overview",
 				"description": "Returns current upload/download rates, totals, and sampled traffic points.",
-				"parameters": []map[string]any{
-					{
-						"name":        "windowSec",
-						"in":          "query",
-						"description": "Window size for sampled traffic data in seconds.",
-						"schema":      map[string]any{"type": "integer", "default": defaultOverviewWindowSec},
-					},
-					{
-						"name":        "maxPoints",
-						"in":          "query",
-						"description": "Maximum number of sampled traffic points.",
-						"schema":      map[string]any{"type": "integer", "default": defaultOverviewMaxPoints},
-					},
-				},
+				"parameters":  runtimeOverviewQueryParameters(),
 				"responses": map[string]any{
 					"200": jsonResponse("Runtime overview.", "RuntimeOverview"),
 				},
@@ -272,6 +259,7 @@ func openAPIPaths() map[string]any {
 			"get": map[string]any{
 				"summary":     "Stream runtime events",
 				"description": "Streams runtime overview snapshots and error events using Server-Sent Events.",
+				"parameters":  runtimeEventsQueryParameters(),
 				"responses": map[string]any{
 					"200": map[string]any{
 						"description": "SSE stream.",
@@ -283,6 +271,34 @@ func openAPIPaths() map[string]any {
 					},
 				},
 			},
+		},
+	}
+}
+
+func runtimeEventsQueryParameters() []map[string]any {
+	parameters := append([]map[string]any{}, runtimeOverviewQueryParameters()...)
+	parameters = append(parameters, map[string]any{
+		"name":        "access_token",
+		"in":          "query",
+		"description": "Optional bearer token fallback for browser EventSource clients that cannot attach Authorization headers.",
+		"schema":      map[string]any{"type": "string"},
+	})
+	return parameters
+}
+
+func runtimeOverviewQueryParameters() []map[string]any {
+	return []map[string]any{
+		{
+			"name":        "windowSec",
+			"in":          "query",
+			"description": "Window size for sampled traffic data in seconds.",
+			"schema":      map[string]any{"type": "integer", "default": defaultOverviewWindowSec},
+		},
+		{
+			"name":        "maxPoints",
+			"in":          "query",
+			"description": "Maximum number of sampled traffic points.",
+			"schema":      map[string]any{"type": "integer", "default": defaultOverviewMaxPoints},
 		},
 	}
 }

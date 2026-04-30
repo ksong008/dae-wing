@@ -1,0 +1,50 @@
+name: daewing2.0 Integration
+
+on:
+  push:
+    branches:
+      - daewing2.0
+  pull_request:
+    branches:
+      - daewing2.0
+  workflow_dispatch:
+
+concurrency:
+  group: daewing2.0-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  transport-surface-lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.3'
+          cache: false
+      - name: Check retired transport markers
+        run: make transport-surface-lint
+
+  go-surface-checks:
+    needs: transport-surface-lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.3'
+          cache: false
+      - name: Run focused HTTP API tests
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: go test ./cmd ./transport/httpapi
+      - name: Run compile sweep
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: go test ./cmd ./engine ./orchestrator ./db -run '^$'

@@ -169,9 +169,24 @@ var (
 	}
 )
 
+const (
+	runtimeEventsAPIPath       = "/api/events/runtime"
+	runtimeEventsTokenQueryKey = "access_token"
+)
+
+func requestAuthToken(r *http.Request) string {
+	if authorization := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); authorization != "" {
+		return authorization
+	}
+	if r.Method == http.MethodGet && r.URL.Path == runtimeEventsAPIPath {
+		return strings.TrimSpace(r.URL.Query().Get(runtimeEventsTokenQueryKey))
+	}
+	return ""
+}
+
 func auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authorization := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		authorization := requestAuthToken(r)
 		var user db.User
 		token, err := jwt.Parse(authorization, func(token *jwt.Token) (interface{}, error) {
 			// Don't forget to validate the alg is what you expect:
@@ -192,7 +207,7 @@ func auth(next http.Handler) http.Handler {
 			}
 			return []byte(user.JwtSecret), nil
 		})
-		ctx := context.Background()
+		ctx := r.Context()
 		if err == nil {
 			if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 				if expireAt, err := token.Claims.GetExpirationTime(); err == nil && time.Now().Before(expireAt.Time) {

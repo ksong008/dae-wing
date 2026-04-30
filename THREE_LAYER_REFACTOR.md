@@ -13,7 +13,7 @@ The runtime topology stays:
 ## Why Keep Three Layers
 
 - It preserves the current product shape and keeps web, orchestration, and proxy concerns separate.
-- It lets `dae-wing` evolve from GraphQL to REST/OpenAPI + SSE without forcing a full `dae` rewrite first.
+- It keeps the REST/OpenAPI + SSE control-plane surface separate from the ongoing `dae` instance-runtime refactor.
 - It avoids moving UI and persistence logic into the proxy engine.
 
 ## Current Problem
@@ -26,7 +26,7 @@ Today `dae-wing` reaches into `dae` through many scattered package calls:
 - control plane access
 - reload and shutdown channels
 
-That makes protocol migration and memory optimization harder, because the boundary is not explicit.
+That makes transport evolution and memory optimization harder, because the boundary is not explicit.
 
 ## Phase 0 Boundary
 
@@ -107,13 +107,18 @@ The main expected wins are:
 
 The biggest memory spike still comes from eBPF object loading and route/materialization, so transport choice alone is not the main savings source.
 
-## Migration Order
+## Current Migration Focus
 
-1. Introduce the `engine` facade in `dae-wing` and route new code through it.
-2. Move runtime-sensitive transport paths to the facade.
-3. Add REST/OpenAPI + SSE transport.
-4. Retire GraphQL.
-5. Move `dae` from package globals to an instance-style engine.
+The transport migration is already complete in this branch family:
+
+- `dae-wing` exposes REST/OpenAPI + SSE as the control-plane transport
+- `daed` talks to `dae-wing` through `/api/` routes
+
+The remaining work is:
+
+1. Keep new control-plane code routed through the `engine` facade.
+2. Continue shrinking `dae` package-global runtime state behind `Engine` instances.
+3. Expand the REST/OpenAPI + SSE surface only where remaining panel workflows still need more runtime signals.
 
 ## Local Validation Strategy
 
