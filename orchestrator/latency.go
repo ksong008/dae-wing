@@ -8,12 +8,14 @@ package orchestrator
 import (
 	"context"
 	"io"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/engine"
 	dialer "github.com/daeuniverse/dae/component/outbound/dialer"
+	"github.com/daeuniverse/outbound/protocol/direct"
 	"github.com/sirupsen/logrus"
 )
 
@@ -284,7 +286,25 @@ func latencyProbeOption(ctx context.Context) (*dialer.GlobalOption, error) {
 
 	log := logrus.New()
 	log.SetOutput(io.Discard)
-	return dialer.NewGlobalOption(&parsedConfig.Global, log), nil
+	option := dialer.NewGlobalOption(&parsedConfig.Global, log)
+	resolverDNS, err := netip.ParseAddrPort(parsedConfig.Global.FallbackResolver)
+	if err != nil {
+		return nil, err
+	}
+	option.ResolverDialer = direct.NewDirectDialerLaddr(netip.Addr{}, direct.Option{
+		FullCone:    false,
+		FallbackDNS: parsedConfig.Global.FallbackResolver,
+	})
+	option.ResolverFullconeDialer = direct.NewDirectDialerLaddr(netip.Addr{}, direct.Option{
+		FullCone:    true,
+		FallbackDNS: parsedConfig.Global.FallbackResolver,
+	})
+	option.ResolverDNS = resolverDNS
+	option.TcpCheckOptionRaw.ResolverDialer = option.ResolverDialer
+	option.TcpCheckOptionRaw.ResolverDNS = resolverDNS
+	option.CheckDnsOptionRaw.ResolverDialer = option.ResolverDialer
+	option.CheckDnsOptionRaw.ResolverDNS = resolverDNS
+	return option, nil
 }
 
 func latencyProbeNodes(ctx context.Context, ids []uint) ([]db.Node, error) {
