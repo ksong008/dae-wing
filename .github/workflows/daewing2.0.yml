@@ -9,47 +9,136 @@ on:
       - daewing2.0
   workflow_dispatch:
 
+permissions: read-all
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 concurrency:
   group: daewing2.0-integration-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   transport-surface-lint:
+    timeout-minutes: 15
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           submodules: recursive
       - uses: actions/setup-go@v6
         with:
           go-version: '1.24.3'
-          cache: false
+          cache-dependency-path: |
+            go.mod
+            go.sum
       - name: Check retired transport markers
         run: make transport-surface-lint
 
   go-surface-checks:
     needs: transport-surface-lint
+    timeout-minutes: 30
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           submodules: recursive
       - uses: actions/setup-go@v6
         with:
           go-version: '1.24.3'
-          cache: false
+          cache-dependency-path: |
+            go.mod
+            go.sum
       - name: Prepare generated deps
         env:
+          GOFLAGS: -mod=mod -modcacherw
           GOPROXY: https://goproxy.cn,direct
           GOSUMDB: sum.golang.google.cn
         run: make deps
       - name: Run focused HTTP API tests
         env:
+          GOFLAGS: -mod=mod -modcacherw
           GOPROXY: https://goproxy.cn,direct
           GOSUMDB: sum.golang.google.cn
         run: go test ./cmd ./transport/httpapi
       - name: Run compile sweep
         env:
+          GOFLAGS: -mod=mod -modcacherw
           GOPROXY: https://goproxy.cn,direct
           GOSUMDB: sum.golang.google.cn
         run: go test ./cmd ./engine ./orchestrator ./db -run '^$'
+
+  unit-full:
+    needs: go-surface-checks
+    name: Unit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.3'
+          cache-dependency-path: |
+            go.mod
+            go.sum
+      - name: Prepare dae-core build artifacts
+        env:
+          GOFLAGS: -mod=mod -modcacherw
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: make deps
+      - name: Run unit tests
+        env:
+          GOFLAGS: -mod=mod -modcacherw
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: |
+          packages=$(go list ./...)
+          failed=""
+          for pkg in $packages; do
+            echo "::group::go test $pkg"
+            if ! go test -count=1 "$pkg"; then
+              failed="$failed $pkg"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "Failed packages:$failed"
+            exit 1
+          fi
+
+  build-smoke:
+    needs: go-surface-checks
+    name: Build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.3'
+          cache-dependency-path: |
+            go.mod
+            go.sum
+      - name: Build dae-wing
+        env:
+          GOFLAGS: -mod=mod -modcacherw
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+          VERSION: test-${{ github.sha }}
+          OUTPUT: ./dae-wing-test
+        run: |
+          make dae-wing
+          ./dae-wing-test export schema >/dev/null

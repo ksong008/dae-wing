@@ -8,7 +8,7 @@ import (
 )
 
 func TestNativeServiceDryRunLifecycle(t *testing.T) {
-	svc := nativeService{}
+	svc := newNativeService()
 	log := logrus.New()
 
 	done := make(chan error, 1)
