@@ -135,6 +135,12 @@ func TestGeneralAndGroupHandlers(t *testing.T) {
 	if _, ok := cacheStatsBody["dnsCacheEntries"].(float64); !ok {
 		t.Fatalf("dnsCacheEntries = %#v", cacheStatsBody["dnsCacheEntries"])
 	}
+	if _, ok := cacheStatsBody["redirectTrackEntries"].(float64); !ok {
+		t.Fatalf("redirectTrackEntries = %#v", cacheStatsBody["redirectTrackEntries"])
+	}
+	if _, ok := cacheStatsBody["routingTuplesEntries"].(float64); !ok {
+		t.Fatalf("routingTuplesEntries = %#v", cacheStatsBody["routingTuplesEntries"])
+	}
 	if _, ok := cacheStatsBody["nodeLatencyCacheEntries"].(float64); !ok {
 		t.Fatalf("nodeLatencyCacheEntries = %#v", cacheStatsBody["nodeLatencyCacheEntries"])
 	}

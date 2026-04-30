@@ -28,6 +28,12 @@ type cacheStatsResource struct {
 	UdpTaskQueueEntries      int    `json:"udpTaskQueueEntries"`
 	UdpTaskDropTotal         uint64 `json:"udpTaskDropTotal"`
 	ActiveTCPConnections     int    `json:"activeTCPConnections"`
+	RedirectTrackEntries     int    `json:"redirectTrackEntries"`
+	RoutingTuplesEntries     int    `json:"routingTuplesEntries"`
+	DomainRoutingEntries     int    `json:"domainRoutingEntries"`
+	UdpConnStateEntries      int    `json:"udpConnStateEntries"`
+	CookiePidEntries         int    `json:"cookiePidEntries"`
+	TgidPnameEntries         int    `json:"tgidPnameEntries"`
 	NodeLatencyCacheEntries  int    `json:"nodeLatencyCacheEntries"`
 }
 
@@ -118,6 +124,12 @@ func handleGeneralCacheStats(rw http.ResponseWriter, r *http.Request) {
 		cacheStats.UdpTaskQueueEntries = stats.UdpTaskQueueEntries
 		cacheStats.UdpTaskDropTotal = stats.UdpTaskDropTotal
 		cacheStats.ActiveTCPConnections = stats.ActiveTCPConnections
+		cacheStats.RedirectTrackEntries = stats.RedirectTrackEntries
+		cacheStats.RoutingTuplesEntries = stats.RoutingTuplesEntries
+		cacheStats.DomainRoutingEntries = stats.DomainRoutingEntries
+		cacheStats.UdpConnStateEntries = stats.UdpConnStateEntries
+		cacheStats.CookiePidEntries = stats.CookiePidEntries
+		cacheStats.TgidPnameEntries = stats.TgidPnameEntries
 	} else if !engine.Default().IsControlPlaneNotInit(err) {
 		writeError(rw, http.StatusInternalServerError, err.Error())
 		return
