@@ -100,7 +100,7 @@ require (
 
 replace github.com/daeuniverse/dae => ./dae-core
 
-replace github.com/daeuniverse/outbound => github.com/ksong008/outbound v0.0.0-20260425061239-55a98566b304
+replace github.com/daeuniverse/outbound => github.com/ksong008/outbound v0.0.0-20260503103420-1effa08403a3
 
 replace github.com/daeuniverse/quic-go => github.com/ksong008/quic-go v0.0.0-20260419080117-578539b67bcc
 
