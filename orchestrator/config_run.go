@@ -42,6 +42,7 @@ func Run(d *gorm.DB, dry bool) (n int32, err error) {
 		if err != nil {
 			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
 		}
+		clearRunningNodeIndex()
 
 		var sys db.System
 		if err = d.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
@@ -214,6 +215,7 @@ func Run(d *gorm.DB, dry bool) (n int32, err error) {
 	if errReload != nil {
 		return 0, fmt.Errorf("failed to load new config: %w; see more in log", errReload)
 	}
+	replaceRunningNodeIndex(nodes)
 
 	var sys db.System
 	if err = d.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
@@ -287,6 +289,7 @@ func Stop(ctx context.Context, timeout time.Duration) (err error) {
 	if err = engine.Default().Stop(timeout); err != nil {
 		return err
 	}
+	clearRunningNodeIndex()
 	if err = tx.Model(&sys).Updates(map[string]interface{}{
 		"running": false,
 	}).Error; err != nil {

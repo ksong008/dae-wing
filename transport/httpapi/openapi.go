@@ -259,7 +259,7 @@ func openAPIPaths() map[string]any {
 		"/api/events/runtime": map[string]any{
 			"get": map[string]any{
 				"summary":     "Stream runtime events",
-				"description": "Streams runtime overview snapshots and error events using Server-Sent Events.",
+				"description": "Streams an initial full runtime overview event, follow-up delta overview events, and runtime error events using Server-Sent Events.",
 				"parameters":  runtimeEventsQueryParameters(),
 				"responses": map[string]any{
 					"200": map[string]any{

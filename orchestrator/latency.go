@@ -43,6 +43,13 @@ var nodeLatencyCache = struct {
 	items: map[uint]*NodeLatencyResult{},
 }
 
+var runtimeNodeIndex = struct {
+	mu        sync.RWMutex
+	idsByName map[string]uint
+}{
+	idsByName: map[string]uint{},
+}
+
 func pruneNodeLatencyCacheLocked(now time.Time) {
 	for id, result := range nodeLatencyCache.items {
 		if result == nil || result.TestedAt.IsZero() || result.TestedAt.Add(nodeLatencyCacheTTL).Before(now) {
@@ -83,7 +90,7 @@ func QueryNodeLatencies(ctx context.Context, ids []uint) ([]*NodeLatencyResult, 
 	}
 
 	merged := snapshotCachedNodeLatencyResults()
-	runtimeResults, err := loadRuntimeNodeLatencyResults(ctx)
+	runtimeResults, err := loadRuntimeNodeLatencyResults()
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +218,7 @@ func lastNodeLatencyCacheUpdatedAt() time.Time {
 	return nodeLatencyCache.updatedAt
 }
 
-func loadRuntimeNodeLatencyResults(ctx context.Context) (map[uint]*NodeLatencyResult, error) {
+func loadRuntimeNodeLatencyResults() (map[uint]*NodeLatencyResult, error) {
 	ctl, err := engine.Default().ControlPlane()
 	if err != nil {
 		if engine.Default().IsControlPlaneNotInit(err) {
@@ -225,40 +232,19 @@ func loadRuntimeNodeLatencyResults(ctx context.Context) (map[uint]*NodeLatencyRe
 		return map[uint]*NodeLatencyResult{}, nil
 	}
 
-	links := make([]string, 0, len(snapshots))
-	for _, snapshot := range snapshots {
-		if snapshot.Link == "" {
-			continue
-		}
-		links = append(links, snapshot.Link)
-	}
-	if len(links) == 0 {
-		return map[uint]*NodeLatencyResult{}, nil
-	}
-
-	var nodes []db.Node
-	if err := db.DB(ctx).Where("link in ?", links).Find(&nodes).Error; err != nil {
-		return nil, err
-	}
-
-	nodeByLink := make(map[string]db.Node, len(nodes))
-	for _, node := range nodes {
-		nodeByLink[node.Link] = node
-	}
-
 	results := make(map[uint]*NodeLatencyResult)
 	for _, snapshot := range snapshots {
 		if snapshot.CheckedAt.IsZero() && snapshot.LatencyMs == nil && snapshot.Message == "no latency result" {
 			continue
 		}
 
-		node, ok := nodeByLink[snapshot.Link]
+		nodeID, ok := runningNodeID(snapshot.Name)
 		if !ok {
 			continue
 		}
 
-		results[node.ID] = cloneNodeLatencyResult(&NodeLatencyResult{
-			NodeID:    node.ID,
+		results[nodeID] = cloneNodeLatencyResult(&NodeLatencyResult{
+			NodeID:    nodeID,
 			LatencyMs: snapshot.LatencyMs,
 			Alive:     snapshot.Alive,
 			TestedAt:  snapshot.CheckedAt,
@@ -268,6 +254,33 @@ func loadRuntimeNodeLatencyResults(ctx context.Context) (map[uint]*NodeLatencyRe
 
 	storeNodeLatencyResults(mapsNodeLatencyValues(results))
 	return results, nil
+}
+
+func replaceRunningNodeIndex(nodes []*node) {
+	idsByName := make(map[string]uint, len(nodes))
+	for _, node := range nodes {
+		if node == nil || node.dbNode == nil || node.uniqueName == "" {
+			continue
+		}
+		idsByName[node.uniqueName] = node.dbNode.ID
+	}
+
+	runtimeNodeIndex.mu.Lock()
+	runtimeNodeIndex.idsByName = idsByName
+	runtimeNodeIndex.mu.Unlock()
+}
+
+func clearRunningNodeIndex() {
+	runtimeNodeIndex.mu.Lock()
+	runtimeNodeIndex.idsByName = map[string]uint{}
+	runtimeNodeIndex.mu.Unlock()
+}
+
+func runningNodeID(name string) (uint, bool) {
+	runtimeNodeIndex.mu.RLock()
+	defer runtimeNodeIndex.mu.RUnlock()
+	id, ok := runtimeNodeIndex.idsByName[name]
+	return id, ok
 }
 
 func selectedCheckInterval(ctx context.Context) (time.Duration, error) {

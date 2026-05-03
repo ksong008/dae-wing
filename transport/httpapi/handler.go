@@ -202,15 +202,33 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(rw, "retry: 3000\n\n")
 	flusher.Flush()
 
-	sendOverviewEvent := func() bool {
+	lastSampleTimestamp := time.Time{}
+
+	sendOverviewEvent := func(event string, payload runtimeOverviewResponse) bool {
+		return writeSSE(rw, flusher, event, payload)
+	}
+
+	sendFullOverviewEvent := func() bool {
 		overview, err := engine.Default().GetRuntimeOverview(windowSec, maxPoints)
 		if err != nil {
 			return writeSSE(rw, flusher, "runtime.error", map[string]string{"error": err.Error()})
 		}
-		return writeSSE(rw, flusher, "runtime.overview", runtimeOverviewFromModel(overview))
+		payload := runtimeOverviewFromModel(overview)
+		lastSampleTimestamp = runtimeOverviewLastSampleTimestamp(overview)
+		return sendOverviewEvent("runtime.overview", payload)
 	}
 
-	if !sendOverviewEvent() {
+	sendDeltaOverviewEvent := func() bool {
+		overview, err := engine.Default().GetRuntimeOverview(windowSec, maxPoints)
+		if err != nil {
+			return writeSSE(rw, flusher, "runtime.error", map[string]string{"error": err.Error()})
+		}
+		payload, nextLastSampleTimestamp := runtimeOverviewDeltaFromModel(overview, lastSampleTimestamp)
+		lastSampleTimestamp = nextLastSampleTimestamp
+		return sendOverviewEvent("runtime.overview.delta", payload)
+	}
+
+	if !sendFullOverviewEvent() {
 		return
 	}
 
@@ -224,7 +242,7 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-streamTicker.C:
-			if !sendOverviewEvent() {
+			if !sendDeltaOverviewEvent() {
 				return
 			}
 		case <-heartbeatTicker.C:
@@ -276,6 +294,43 @@ func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewR
 		Goroutines:        overview.Goroutines,
 		Samples:           samples,
 	}
+}
+
+func runtimeOverviewDeltaFromModel(overview *engine.RuntimeOverview, after time.Time) (runtimeOverviewResponse, time.Time) {
+	samples := make([]runtimeTrafficSampleResponse, 0, len(overview.Samples))
+	lastSampleTimestamp := after
+	for _, sample := range overview.Samples {
+		if !sample.Timestamp.After(after) {
+			continue
+		}
+		samples = append(samples, runtimeTrafficSampleResponse{
+			Timestamp:    sample.Timestamp.Format(time.RFC3339Nano),
+			UploadRate:   strconv.FormatUint(sample.UploadRate, 10),
+			DownloadRate: strconv.FormatUint(sample.DownloadRate, 10),
+		})
+		lastSampleTimestamp = sample.Timestamp
+	}
+	payload := runtimeOverviewResponse{
+		UpdatedAt:         overview.UpdatedAt.Format(time.RFC3339Nano),
+		UploadRate:        strconv.FormatUint(overview.UploadRate, 10),
+		DownloadRate:      strconv.FormatUint(overview.DownloadRate, 10),
+		UploadTotal:       strconv.FormatUint(overview.UploadTotal, 10),
+		DownloadTotal:     strconv.FormatUint(overview.DownloadTotal, 10),
+		ActiveConnections: overview.ActiveConnections,
+		UDPSessions:       overview.UDPSessions,
+		RSSBytes:          strconv.FormatUint(overview.RSSBytes, 10),
+		HeapAllocBytes:    strconv.FormatUint(overview.HeapAllocBytes, 10),
+		Goroutines:        overview.Goroutines,
+		Samples:           samples,
+	}
+	return payload, lastSampleTimestamp
+}
+
+func runtimeOverviewLastSampleTimestamp(overview *engine.RuntimeOverview) time.Time {
+	if len(overview.Samples) == 0 {
+		return time.Time{}
+	}
+	return overview.Samples[len(overview.Samples)-1].Timestamp
 }
 
 func decodeJSONBody(r *http.Request, dst any) error {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/daeuniverse/dae-wing/db"
 )
 
 func TestStoreNodeLatencyResultsPrunesExpiredEntries(t *testing.T) {
@@ -60,6 +62,37 @@ func TestStoreNodeLatencyResultsCapsCacheSize(t *testing.T) {
 	}
 	if _, ok := snapshot[uint(nodeLatencyCacheMaxSize+1)]; !ok {
 		t.Fatal("expected newest latency cache entry to remain")
+	}
+}
+
+func TestReplaceRunningNodeIndex(t *testing.T) {
+	clearRunningNodeIndex()
+	defer clearRunningNodeIndex()
+
+	replaceRunningNodeIndex([]*node{
+		{
+			dbNode:     &db.Node{ID: 11},
+			uniqueName: "alpha",
+		},
+		{
+			dbNode:     &db.Node{ID: 29},
+			uniqueName: "beta",
+		},
+	})
+
+	if id, ok := runningNodeID("alpha"); !ok || id != 11 {
+		t.Fatalf("runningNodeID(alpha) = (%d, %v), want (11, true)", id, ok)
+	}
+	if id, ok := runningNodeID("beta"); !ok || id != 29 {
+		t.Fatalf("runningNodeID(beta) = (%d, %v), want (29, true)", id, ok)
+	}
+	if _, ok := runningNodeID("missing"); ok {
+		t.Fatal("expected missing runtime node key to be absent")
+	}
+
+	clearRunningNodeIndex()
+	if _, ok := runningNodeID("alpha"); ok {
+		t.Fatal("expected runtime node index to be cleared")
 	}
 }
 

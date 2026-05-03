@@ -4,6 +4,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/daeuniverse/dae-wing/engine"
 )
 
 func TestRuntimeOverviewQueryValues(t *testing.T) {
@@ -69,5 +71,39 @@ func TestRuntimeOverviewStreamInterval(t *testing.T) {
 				t.Fatalf("runtimeOverviewStreamInterval(%d) = %v, want %v", tt.windowSec, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRuntimeOverviewDeltaFromModel(t *testing.T) {
+	overview := &engine.RuntimeOverview{
+		UpdatedAt:         time.Unix(1_700_000_100, 0),
+		UploadRate:        11,
+		DownloadRate:      22,
+		UploadTotal:       33,
+		DownloadTotal:     44,
+		ActiveConnections: 5,
+		UDPSessions:       6,
+		RSSBytes:          77,
+		HeapAllocBytes:    88,
+		Goroutines:        9,
+		Samples: []engine.RuntimeTrafficSample{
+			{Timestamp: time.Unix(1_700_000_000, 0), UploadRate: 1, DownloadRate: 2},
+			{Timestamp: time.Unix(1_700_000_050, 0), UploadRate: 3, DownloadRate: 4},
+			{Timestamp: time.Unix(1_700_000_090, 0), UploadRate: 5, DownloadRate: 6},
+		},
+	}
+
+	delta, next := runtimeOverviewDeltaFromModel(overview, time.Unix(1_700_000_050, 0))
+	if len(delta.Samples) != 1 {
+		t.Fatalf("delta samples len = %d, want 1", len(delta.Samples))
+	}
+	if delta.Samples[0].UploadRate != "5" || delta.Samples[0].DownloadRate != "6" {
+		t.Fatalf("delta sample = %+v", delta.Samples[0])
+	}
+	if next.Unix() != 1_700_000_090 {
+		t.Fatalf("next sample timestamp = %v, want %v", next, time.Unix(1_700_000_090, 0))
+	}
+	if delta.UploadRate != "11" || delta.DownloadRate != "22" {
+		t.Fatalf("unexpected scalar fields in delta: %+v", delta)
 	}
 }
