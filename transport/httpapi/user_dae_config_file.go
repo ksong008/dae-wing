@@ -360,13 +360,13 @@ func loadSelectedRuntimeResources(d *gorm.DB) (*db.Config, *db.Dns, *db.Routing,
 
 func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedImportedDAEConfig, error) {
 	resolved := &resolvedImportedDAEConfig{
-		Warnings:     append([]string(nil), resources.Warnings...),
-		ConfigName:   resources.ConfigName,
-		DNSName:      resources.DNSName,
-		RoutingName:  resources.RoutingName,
-		Global:       resources.Global,
-		DNS:          resources.DNS,
-		Routing:      resources.Routing,
+		Warnings:      append([]daeConfigFileIssue(nil), resources.Warnings...),
+		ConfigName:    resources.ConfigName,
+		DNSName:       resources.DNSName,
+		RoutingName:   resources.RoutingName,
+		Global:        resources.Global,
+		DNS:           resources.DNS,
+		Routing:       resources.Routing,
 		Subscriptions: make([]resolvedImportedSubscription, 0, len(resources.Subscriptions)),
 		Nodes:         make([]resolvedImportedNode, 0),
 		Groups:        make([]resolvedImportedGroup, 0, len(resources.Groups)),
@@ -496,7 +496,7 @@ func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedI
 	return resolved, nil
 }
 
-func buildNativeDAEConfig(selectedConfig *db.Config, selectedDNS *db.Dns, selectedRouting *db.Routing, groups []db.Group) (*daeConfig.Config, []string, error) {
+func buildNativeDAEConfig(selectedConfig *db.Config, selectedDNS *db.Dns, selectedRouting *db.Routing, groups []db.Group) (*daeConfig.Config, []daeConfigFileIssue, error) {
 	conf, err := engine.Default().ParseConfig(&selectedConfig.Global, &selectedDNS.Dns, &selectedRouting.Routing)
 	if err != nil {
 		return nil, nil, err
@@ -618,8 +618,8 @@ func newNativeExportState(groups []db.Group) *nativeExportState {
 	}
 }
 
-func (s *nativeExportState) populate(conf *daeConfig.Config) []string {
-	var warnings []string
+func (s *nativeExportState) populate(conf *daeConfig.Config) []daeConfigFileIssue {
+	var warnings []daeConfigFileIssue
 	conf.Subscription = nil
 	conf.Node = nil
 	conf.Group = nil
