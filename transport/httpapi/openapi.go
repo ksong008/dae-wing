@@ -267,7 +267,8 @@ func openAPIPaths() map[string]any {
 							"schema": map[string]any{
 								"type": "object",
 								"properties": map[string]any{
-									"dry": map[string]any{"type": "boolean", "default": false},
+									"dry":        map[string]any{"type": "boolean", "default": false},
+									"timeoutSec": map[string]any{"type": "integer", "default": 30, "maximum": 120},
 								},
 							},
 						},
@@ -289,7 +290,7 @@ func openAPIPaths() map[string]any {
 							"schema": map[string]any{
 								"type": "object",
 								"properties": map[string]any{
-									"timeoutSec": map[string]any{"type": "integer", "default": 10},
+									"timeoutSec": map[string]any{"type": "integer", "default": 10, "maximum": 120},
 								},
 							},
 						},
@@ -337,13 +338,13 @@ func runtimeOverviewQueryParameters() []map[string]any {
 			"name":        "windowSec",
 			"in":          "query",
 			"description": "Window size for sampled traffic data in seconds.",
-			"schema":      map[string]any{"type": "integer", "default": defaultOverviewWindowSec},
+			"schema":      map[string]any{"type": "integer", "default": defaultOverviewWindowSec, "maximum": maxOverviewWindowSec},
 		},
 		{
 			"name":        "maxPoints",
 			"in":          "query",
 			"description": "Maximum number of sampled traffic points.",
-			"schema":      map[string]any{"type": "integer", "default": defaultOverviewMaxPoints},
+			"schema":      map[string]any{"type": "integer", "default": defaultOverviewMaxPoints, "maximum": maxOverviewMaxPoints},
 		},
 	}
 }
@@ -361,16 +362,19 @@ func openAPISchemas() map[string]any {
 		"RuntimeOverview": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"updatedAt":         map[string]any{"type": "string", "format": "date-time"},
-				"uploadRate":        map[string]any{"type": "string"},
-				"downloadRate":      map[string]any{"type": "string"},
-				"uploadTotal":       map[string]any{"type": "string"},
-				"downloadTotal":     map[string]any{"type": "string"},
-				"activeConnections": map[string]any{"type": "integer"},
-				"udpSessions":       map[string]any{"type": "integer"},
-				"rssBytes":          map[string]any{"type": "string"},
-				"heapAllocBytes":    map[string]any{"type": "string"},
-				"goroutines":        map[string]any{"type": "integer"},
+				"updatedAt":             map[string]any{"type": "string", "format": "date-time"},
+				"uploadRate":            map[string]any{"type": "string"},
+				"downloadRate":          map[string]any{"type": "string"},
+				"uploadTotal":           map[string]any{"type": "string"},
+				"downloadTotal":         map[string]any{"type": "string"},
+				"activeConnections":     map[string]any{"type": "integer"},
+				"udpSessions":           map[string]any{"type": "integer"},
+				"udpTaskQueues":         map[string]any{"type": "integer"},
+				"udpTaskDropTotal":      map[string]any{"type": "string"},
+				"packetSnifferSessions": map[string]any{"type": "integer"},
+				"rssBytes":              map[string]any{"type": "string"},
+				"heapAllocBytes":        map[string]any{"type": "string"},
+				"goroutines":            map[string]any{"type": "integer"},
 				"samples": map[string]any{
 					"type":  "array",
 					"items": schemaRef("RuntimeTrafficSample"),
@@ -1121,7 +1125,7 @@ func nodeCollectionPath() map[string]any {
 				{"name": "subscriptionId", "in": "query", "schema": map[string]any{"type": "integer"}},
 				{"name": "independent", "in": "query", "schema": map[string]any{"type": "boolean"}},
 				{"name": "afterId", "in": "query", "schema": map[string]any{"type": "integer"}},
-				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer"}},
+				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "maximum": maxListLimit}},
 			},
 			"responses": map[string]any{
 				"200": jsonResponse("Node list.", "NodeList"),
@@ -1295,7 +1299,7 @@ func subscriptionNodesPath() map[string]any {
 			"parameters": []map[string]any{
 				idPathParameter(),
 				{"name": "afterId", "in": "query", "schema": map[string]any{"type": "integer"}},
-				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer"}},
+				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "maximum": maxListLimit}},
 			},
 			"responses": map[string]any{
 				"200": jsonResponse("Subscription nodes.", "NodeList"),

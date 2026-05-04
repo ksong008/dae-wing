@@ -5,12 +5,70 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/orchestrator"
 )
 
 type requestContextKey struct{}
+
+func TestDefaultListenIsLoopback(t *testing.T) {
+	if listen != "127.0.0.1:2023" {
+		t.Fatalf("default listen = %q, want loopback", listen)
+	}
+}
+
+func TestNewControlPlaneServerSetsTimeouts(t *testing.T) {
+	server := newControlPlaneServer("127.0.0.1:0", http.NewServeMux())
+	if server.Addr != "127.0.0.1:0" {
+		t.Fatalf("server addr = %q, want 127.0.0.1:0", server.Addr)
+	}
+	if server.ReadHeaderTimeout != 5*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %v, want 5s", server.ReadHeaderTimeout)
+	}
+	if server.ReadTimeout != 30*time.Second {
+		t.Fatalf("ReadTimeout = %v, want 30s", server.ReadTimeout)
+	}
+	if server.WriteTimeout != 60*time.Second {
+		t.Fatalf("WriteTimeout = %v, want 60s", server.WriteTimeout)
+	}
+	if server.IdleTimeout != 120*time.Second {
+		t.Fatalf("IdleTimeout = %v, want 120s", server.IdleTimeout)
+	}
+}
+
+func TestControlPlaneCORSRestrictsOrigins(t *testing.T) {
+	handler := controlPlaneCORS().Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	t.Run("allows local origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
+		req.Header.Set("Origin", "http://127.0.0.1:5173")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:5173" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want local origin", got)
+		}
+	})
+
+	t.Run("rejects remote origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
+		req.Header.Set("Origin", "https://example.com")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
+		}
+	})
+}
 
 func TestRequestAuthToken(t *testing.T) {
 	t.Run("prefers bearer authorization header", func(t *testing.T) {

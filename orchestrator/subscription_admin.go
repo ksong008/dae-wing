@@ -44,7 +44,7 @@ func ImportSubscription(ctx context.Context, rollbackError bool, arg ImportArgum
 		}
 	}
 
-	links, err := FetchSubscriptionLinks(arg.Link)
+	links, err := FetchSubscriptionLinks(ctx, arg.Link)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func RefreshSubscription(ctx context.Context, id uint) (sub *db.Subscription, er
 		return nil, err
 	}
 
-	links, err := FetchSubscriptionLinks(current.Link)
+	links, err := FetchSubscriptionLinks(ctx, current.Link)
 	if err != nil {
 		return nil, err
 	}

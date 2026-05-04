@@ -31,19 +31,25 @@ type node struct {
 
 var runLock sync.Mutex
 
-func Run(d *gorm.DB, dry bool) (n int32, err error) {
+func Run(ctx context.Context, dry bool) (n int32, err error) {
 	if ok := runLock.TryLock(); !ok {
 		return 0, fmt.Errorf("the last request didn't complete; make a cup of tea and take a break")
 	}
 	defer runLock.Unlock()
 
-	if dry {
-		err = engine.Default().Reload(engine.Default().EmptyConfig())
-		if err != nil {
-			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
+	tx := db.BeginTx(ctx)
+	committed := false
+	defer func() {
+		if !committed {
+			tx.Rollback()
 		}
-		clearRunningNodeIndex()
+	}()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	d := tx
 
+	if dry {
 		var sys db.System
 		if err = d.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
 			return 0, err
@@ -53,6 +59,16 @@ func Run(d *gorm.DB, dry bool) (n int32, err error) {
 		}).Error; err != nil {
 			return 0, err
 		}
+		if err = tx.Commit().Error; err != nil {
+			return 0, err
+		}
+		committed = true
+
+		err = engine.Default().ReloadContext(ctx, engine.Default().EmptyConfig())
+		if err != nil {
+			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
+		}
+		clearRunningNodeIndex()
 		return 1, nil
 	}
 
@@ -211,12 +227,6 @@ func Run(d *gorm.DB, dry bool) (n int32, err error) {
 		c.Node = append(c.Node, daeConfig.KeyableString(fmt.Sprintf("%v:%v", node.uniqueName, node.dbNode.Link)))
 	}
 
-	errReload := engine.Default().Reload(c)
-	if errReload != nil {
-		return 0, fmt.Errorf("failed to load new config: %w; see more in log", errReload)
-	}
-	replaceRunningNodeIndex(nodes)
-
 	var sys db.System
 	if err = d.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
 		return 0, err
@@ -246,6 +256,17 @@ func Run(d *gorm.DB, dry bool) (n int32, err error) {
 	if err = d.Model(&sys).Association("RunningGroups").Replace(groups); err != nil {
 		return 0, err
 	}
+	if err = tx.Commit().Error; err != nil {
+		return 0, err
+	}
+	committed = true
+
+	errReload := engine.Default().ReloadContext(ctx, c)
+	if errReload != nil {
+		clearRunningNodeIndex()
+		return 0, markStoppedAfterRestoreFailure(context.WithoutCancel(ctx), fmt.Errorf("failed to load new config: %w; see more in log", errReload))
+	}
+	replaceRunningNodeIndex(nodes)
 
 	return 1, nil
 }
@@ -255,12 +276,9 @@ func RestoreRunningState(ctx context.Context) (err error) {
 	if err != nil || !reload {
 		return err
 	}
-	tx := db.BeginTx(ctx)
-	if _, err = Run(tx, false); err != nil {
-		tx.Rollback()
-		return markStoppedAfterRestoreFailure(ctx, err)
+	if _, err = Run(ctx, false); err != nil {
+		return markStoppedAfterRestoreFailure(context.WithoutCancel(ctx), err)
 	}
-	tx.Commit()
 	return nil
 }
 
@@ -270,13 +288,15 @@ func Stop(ctx context.Context, timeout time.Duration) (err error) {
 	}
 
 	tx := db.BeginTx(ctx)
+	committed := false
 	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
+		if !committed {
 			tx.Rollback()
 		}
 	}()
+	if tx.Error != nil {
+		return tx.Error
+	}
 
 	var sys db.System
 	if err = tx.Model(&db.System{}).FirstOrCreate(&sys).Error; err != nil {
@@ -295,11 +315,18 @@ func Stop(ctx context.Context, timeout time.Duration) (err error) {
 	}).Error; err != nil {
 		return err
 	}
+	if err = tx.Commit().Error; err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
 func markStoppedAfterRestoreFailure(ctx context.Context, original error) error {
 	tx := db.BeginTx(ctx)
+	if tx.Error != nil {
+		return fmt.Errorf("%w; %v", original, tx.Error)
+	}
 	var sys db.System
 	if err := tx.Model(&sys).Select("id").First(&sys).Error; err != nil {
 		tx.Rollback()
@@ -311,7 +338,9 @@ func markStoppedAfterRestoreFailure(ctx context.Context, original error) error {
 		tx.Rollback()
 		return fmt.Errorf("%w; %v", original, err)
 	}
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("%w; %v", original, err)
+	}
 	return original
 }
 

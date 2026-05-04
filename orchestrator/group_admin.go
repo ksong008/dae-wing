@@ -210,6 +210,24 @@ func AddGroupSubscriptions(ctx context.Context, id uint, subscriptionIDs []uint,
 	if err != nil {
 		return 0, err
 	}
+	tx := db.BeginTx(ctx)
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if tx.Error != nil {
+			tx.Rollback()
+		}
+	}()
+	if err := ensureGroupExists(tx, id); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if err := ensureIDsExist(tx, &db.Subscription{}, subscriptionIDs, "subscription"); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
 	bindings := make([]db.GroupSubscription, 0, len(subscriptionIDs))
 	for _, subscriptionID := range subscriptionIDs {
 		bindings = append(bindings, db.GroupSubscription{
@@ -218,12 +236,6 @@ func AddGroupSubscriptions(ctx context.Context, id uint, subscriptionIDs []uint,
 			NameFilterRegex: normalizedRegex,
 		})
 	}
-	tx := db.BeginTx(ctx)
-	defer func() {
-		if tx.Error != nil {
-			tx.Rollback()
-		}
-	}()
 	if len(bindings) > 0 {
 		if err := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "group_id"}, {Name: "subscription_id"}},
@@ -247,11 +259,22 @@ func AddGroupSubscriptions(ctx context.Context, id uint, subscriptionIDs []uint,
 
 func DeleteGroupSubscriptions(ctx context.Context, id uint, subscriptionIDs []uint) (int32, error) {
 	tx := db.BeginTx(ctx)
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
 	defer func() {
 		if tx.Error != nil {
 			tx.Rollback()
 		}
 	}()
+	if err := ensureGroupExists(tx, id); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if err := ensureIDsExist(tx, &db.Subscription{}, subscriptionIDs, "subscription"); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
 	if err := tx.Where("group_id = ? AND subscription_id in ?", id, subscriptionIDs).Delete(&db.GroupSubscription{}).Error; err != nil {
 		tx.Rollback()
 		return 0, err
@@ -267,16 +290,28 @@ func DeleteGroupSubscriptions(ctx context.Context, id uint, subscriptionIDs []ui
 }
 
 func AddGroupNodes(ctx context.Context, id uint, nodeIDs []uint) (int32, error) {
-	nodes := make([]db.Node, 0, len(nodeIDs))
-	for _, nodeID := range nodeIDs {
-		nodes = append(nodes, db.Node{ID: nodeID})
-	}
 	tx := db.BeginTx(ctx)
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
 	defer func() {
 		if tx.Error != nil {
 			tx.Rollback()
 		}
 	}()
+	if err := ensureGroupExists(tx, id); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if err := ensureIDsExist(tx, &db.Node{}, nodeIDs, "node"); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	nodes := make([]db.Node, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		nodes = append(nodes, db.Node{ID: nodeID})
+	}
 	if err := tx.Model(&db.Group{ID: id}).Association("Node").Append(nodes); err != nil {
 		tx.Rollback()
 		return 0, err
@@ -292,16 +327,28 @@ func AddGroupNodes(ctx context.Context, id uint, nodeIDs []uint) (int32, error) 
 }
 
 func DeleteGroupNodes(ctx context.Context, id uint, nodeIDs []uint) (int32, error) {
-	nodes := make([]db.Node, 0, len(nodeIDs))
-	for _, nodeID := range nodeIDs {
-		nodes = append(nodes, db.Node{ID: nodeID})
-	}
 	tx := db.BeginTx(ctx)
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
 	defer func() {
 		if tx.Error != nil {
 			tx.Rollback()
 		}
 	}()
+	if err := ensureGroupExists(tx, id); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if err := ensureIDsExist(tx, &db.Node{}, nodeIDs, "node"); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	nodes := make([]db.Node, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		nodes = append(nodes, db.Node{ID: nodeID})
+	}
 	if err := tx.Model(&db.Group{ID: id}).Association("Node").Delete(nodes); err != nil {
 		tx.Rollback()
 		return 0, err
@@ -351,4 +398,49 @@ func normalizeGroupNameFilterRegex(value *string) (*string, error) {
 
 func bumpGroupVersion(d *gorm.DB, id uint) error {
 	return d.Model(db.Group{ID: id}).Update("version", gorm.Expr("version + 1")).Error
+}
+
+func ensureGroupExists(d *gorm.DB, id uint) error {
+	var count int64
+	if err := d.Model(&db.Group{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("group %d: %w", id, gorm.ErrRecordNotFound)
+	}
+	return nil
+}
+
+func ensureIDsExist(d *gorm.DB, model any, ids []uint, label string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	uniqueIDs := make([]uint, 0, len(ids))
+	seen := make(map[uint]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+
+	var foundIDs []uint
+	if err := d.Model(model).Where("id in ?", uniqueIDs).Pluck("id", &foundIDs).Error; err != nil {
+		return err
+	}
+	found := make(map[uint]struct{}, len(foundIDs))
+	for _, id := range foundIDs {
+		found[id] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, id := range uniqueIDs {
+		if _, ok := found[id]; !ok {
+			missing = append(missing, fmt.Sprintf("%d", id))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s ids not found: %s: %w", label, strings.Join(missing, ", "), gorm.ErrRecordNotFound)
+	}
+	return nil
 }

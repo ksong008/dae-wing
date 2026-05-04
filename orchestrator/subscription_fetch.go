@@ -6,6 +6,7 @@
 package orchestrator
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,29 +18,34 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func FetchSubscriptionLinks(subscriptionLink string) ([]string, error) {
-	timeout := 10 * time.Second
+const subscriptionFetchTimeout = 10 * time.Second
 
-	links, err := fetchSubscriptionLinksWithTransport(subscriptionLink, http.DefaultTransport, timeout/2)
-	if err != nil {
-		links, routeErr := fetchSubscriptionLinksWithTransport(subscriptionLink, engine.Default().HTTPTransport(), timeout/2)
-		if routeErr != nil {
-			if engine.Default().IsControlPlaneNotInit(routeErr) {
-				return nil, err
-			}
-			return nil, fmt.Errorf("%v (direct); %w (route)", err, routeErr)
-		}
+func FetchSubscriptionLinks(ctx context.Context, subscriptionLink string) ([]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, subscriptionFetchTimeout)
+	defer cancel()
+
+	links, err := fetchSubscriptionLinksWithTransport(ctx, subscriptionLink, engine.Default().HTTPTransport())
+	if err == nil {
 		return links, nil
+	}
+	if !engine.Default().IsControlPlaneNotInit(err) {
+		return nil, fmt.Errorf("failed to fetch subscription through route: %w", err)
+	}
+	links, directErr := fetchSubscriptionLinksWithTransport(ctx, subscriptionLink, http.DefaultTransport)
+	if directErr != nil {
+		return nil, fmt.Errorf("%v (route unavailable); %w (direct)", err, directErr)
 	}
 	return links, nil
 }
 
-func fetchSubscriptionLinksWithTransport(subscriptionLink string, transport http.RoundTripper, timeout time.Duration) ([]string, error) {
+func fetchSubscriptionLinksWithTransport(ctx context.Context, subscriptionLink string, transport http.RoundTripper) ([]string, error) {
 	client := http.Client{
-		Timeout:   timeout,
 		Transport: transport,
 	}
-	req, err := http.NewRequest(http.MethodGet, subscriptionLink, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subscriptionLink, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -49,12 +55,12 @@ func fetchSubscriptionLinksWithTransport(subscriptionLink string, transport http
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch link: %v", resp.Status)
 	}
-	defer resp.Body.Close()
 
-	payload, err := io.ReadAll(resp.Body)
+	payload, err := subscription.ReadAllLimited(resp.Body, subscription.MaxSubscriptionBytes)
 	if err != nil {
 		return nil, err
 	}

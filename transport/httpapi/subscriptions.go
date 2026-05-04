@@ -228,7 +228,7 @@ func handleSubscriptionNodes(rw http.ResponseWriter, r *http.Request, id uint) {
 		return
 	}
 	afterID, hasAfterID := parseOptionalUint(r.URL.Query().Get("afterId"))
-	limitValue := parsePositiveInt(r.URL.Query().Get("limit"), 0)
+	limitValue := parseListLimit(r.URL.Query().Get("limit"))
 
 	var afterIDPtr *uint
 	if hasAfterID {

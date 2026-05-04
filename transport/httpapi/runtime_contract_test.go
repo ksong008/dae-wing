@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,63 @@ func TestRuntimeOverviewQueryValues(t *testing.T) {
 		windowSec, maxPoints := runtimeOverviewQueryValues(req)
 		if windowSec != defaultOverviewWindowSec || maxPoints != defaultOverviewMaxPoints {
 			t.Fatalf("runtimeOverviewQueryValues = (%d, %d), want defaults (%d, %d)", windowSec, maxPoints, defaultOverviewWindowSec, defaultOverviewMaxPoints)
+		}
+	})
+
+	t.Run("clamps excessive values", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/events/runtime?windowSec=999999&maxPoints=999999", nil)
+		windowSec, maxPoints := runtimeOverviewQueryValues(req)
+		if windowSec != maxOverviewWindowSec || maxPoints != maxOverviewMaxPoints {
+			t.Fatalf("runtimeOverviewQueryValues = (%d, %d), want max (%d, %d)", windowSec, maxPoints, maxOverviewWindowSec, maxOverviewMaxPoints)
+		}
+	})
+}
+
+func TestParseListLimitClampsExcessiveValues(t *testing.T) {
+	if got := parseListLimit("999999"); got != maxListLimit {
+		t.Fatalf("parseListLimit() = %d, want %d", got, maxListLimit)
+	}
+	if got := parseListLimit("bad"); got != 0 {
+		t.Fatalf("parseListLimit(bad) = %d, want 0", got)
+	}
+}
+
+func TestDecodeJSONBodyRejectsTrailingJSONValues(t *testing.T) {
+	req := httptest.NewRequest("POST", "/runtime/reload", strings.NewReader(`{"dry":false} {"dry":true}`))
+	var dst reloadRequest
+	if err := decodeJSONBody(req, &dst); err == nil {
+		t.Fatal("decodeJSONBody() accepted multiple json values")
+	}
+}
+
+func TestDecodeJSONBodyRejectsOversizeBody(t *testing.T) {
+	req := httptest.NewRequest("POST", "/runtime/reload", strings.NewReader(strings.Repeat("a", maxJSONBodyBytes+1)))
+	var dst reloadRequest
+	if err := decodeJSONBody(req, &dst); err == nil {
+		t.Fatal("decodeJSONBody() accepted an oversized body")
+	}
+}
+
+func TestRuntimeOperationTimeout(t *testing.T) {
+	t.Run("uses fallback", func(t *testing.T) {
+		timeout, err := runtimeOperationTimeout(0, 7*time.Second)
+		if err != nil {
+			t.Fatalf("runtimeOperationTimeout() error = %v", err)
+		}
+		if timeout != 7*time.Second {
+			t.Fatalf("runtimeOperationTimeout() = %v, want 7s", timeout)
+		}
+	})
+
+	t.Run("rejects negative", func(t *testing.T) {
+		if _, err := runtimeOperationTimeout(-1, time.Second); err == nil {
+			t.Fatal("runtimeOperationTimeout() accepted a negative timeout")
+		}
+	})
+
+	t.Run("rejects excessive", func(t *testing.T) {
+		if _, err := runtimeOperationTimeout(int(maxRuntimeTimeout/time.Second)+1, time.Second); err == nil {
+			t.Fatal("runtimeOperationTimeout() accepted an excessive timeout")
 		}
 	})
 }
@@ -76,16 +134,19 @@ func TestRuntimeOverviewStreamInterval(t *testing.T) {
 
 func TestRuntimeOverviewDeltaFromModel(t *testing.T) {
 	overview := &engine.RuntimeOverview{
-		UpdatedAt:         time.Unix(1_700_000_100, 0),
-		UploadRate:        11,
-		DownloadRate:      22,
-		UploadTotal:       33,
-		DownloadTotal:     44,
-		ActiveConnections: 5,
-		UDPSessions:       6,
-		RSSBytes:          77,
-		HeapAllocBytes:    88,
-		Goroutines:        9,
+		UpdatedAt:             time.Unix(1_700_000_100, 0),
+		UploadRate:            11,
+		DownloadRate:          22,
+		UploadTotal:           33,
+		DownloadTotal:         44,
+		ActiveConnections:     5,
+		UDPSessions:           6,
+		UDPTaskQueues:         7,
+		UDPTaskDropTotal:      8,
+		PacketSnifferSessions: 9,
+		RSSBytes:              77,
+		HeapAllocBytes:        88,
+		Goroutines:            10,
 		Samples: []engine.RuntimeTrafficSample{
 			{Timestamp: time.Unix(1_700_000_000, 0), UploadRate: 1, DownloadRate: 2},
 			{Timestamp: time.Unix(1_700_000_050, 0), UploadRate: 3, DownloadRate: 4},
@@ -105,5 +166,8 @@ func TestRuntimeOverviewDeltaFromModel(t *testing.T) {
 	}
 	if delta.UploadRate != "11" || delta.DownloadRate != "22" {
 		t.Fatalf("unexpected scalar fields in delta: %+v", delta)
+	}
+	if delta.UDPTaskQueues != 7 || delta.UDPTaskDropTotal != "8" || delta.PacketSnifferSessions != 9 {
+		t.Fatalf("unexpected udp telemetry fields in delta: %+v", delta)
 	}
 }

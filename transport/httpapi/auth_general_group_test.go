@@ -161,6 +161,21 @@ func TestGeneralAndGroupHandlers(t *testing.T) {
 	group := decodeBody(t, createGroup)
 	groupID := int(group["id"].(float64))
 
+	missingGroup := performRawRequest(handler, http.MethodPost, "/groups/999999/nodes", `{"nodeIds":[`+itoa(int(node.ID))+`]}`, &user)
+	if missingGroup.Code != http.StatusNotFound {
+		t.Fatalf("missing group association code = %d, want %d, body = %s", missingGroup.Code, http.StatusNotFound, missingGroup.Body.String())
+	}
+
+	missingNode := performRawRequest(handler, http.MethodPost, "/groups/"+itoa(groupID)+"/nodes", `{"nodeIds":[999999]}`, &user)
+	if missingNode.Code != http.StatusNotFound {
+		t.Fatalf("missing node association code = %d, want %d, body = %s", missingNode.Code, http.StatusNotFound, missingNode.Body.String())
+	}
+
+	missingSubscription := performRawRequest(handler, http.MethodPost, "/groups/"+itoa(groupID)+"/subscriptions", `{"subscriptionIds":[999999]}`, &user)
+	if missingSubscription.Code != http.StatusNotFound {
+		t.Fatalf("missing subscription association code = %d, want %d, body = %s", missingSubscription.Code, http.StatusNotFound, missingSubscription.Body.String())
+	}
+
 	addNodes := performRawRequest(handler, http.MethodPost, "/groups/"+itoa(groupID)+"/nodes", `{"nodeIds":[`+itoa(int(node.ID))+`]}`, &user)
 	if addNodes.Code != http.StatusOK {
 		t.Fatalf("add group nodes code = %d, body = %s", addNodes.Code, addNodes.Body.String())

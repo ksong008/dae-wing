@@ -6,12 +6,14 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/orchestrator"
 	"github.com/daeuniverse/dae/pkg/config_parser"
+	"gorm.io/gorm"
 )
 
 type paramResource struct {
@@ -196,14 +198,14 @@ func handleGroupSubscriptions(rw http.ResponseWriter, r *http.Request, id uint) 
 	case http.MethodPost:
 		updated, err := orchestrator.AddGroupSubscriptions(r.Context(), id, req.SubscriptionIDs, req.NameFilterRegex)
 		if err != nil {
-			writeError(rw, http.StatusBadRequest, err.Error())
+			writeAssociationMutationError(rw, err)
 			return
 		}
 		writeJSON(rw, http.StatusOK, map[string]any{"updated": updated})
 	case http.MethodDelete:
 		updated, err := orchestrator.DeleteGroupSubscriptions(r.Context(), id, req.SubscriptionIDs)
 		if err != nil {
-			writeError(rw, http.StatusBadRequest, err.Error())
+			writeAssociationMutationError(rw, err)
 			return
 		}
 		writeJSON(rw, http.StatusOK, map[string]any{"updated": updated})
@@ -222,20 +224,28 @@ func handleGroupNodes(rw http.ResponseWriter, r *http.Request, id uint) {
 	case http.MethodPost:
 		updated, err := orchestrator.AddGroupNodes(r.Context(), id, req.NodeIDs)
 		if err != nil {
-			writeError(rw, http.StatusBadRequest, err.Error())
+			writeAssociationMutationError(rw, err)
 			return
 		}
 		writeJSON(rw, http.StatusOK, map[string]any{"updated": updated})
 	case http.MethodDelete:
 		updated, err := orchestrator.DeleteGroupNodes(r.Context(), id, req.NodeIDs)
 		if err != nil {
-			writeError(rw, http.StatusBadRequest, err.Error())
+			writeAssociationMutationError(rw, err)
 			return
 		}
 		writeJSON(rw, http.StatusOK, map[string]any{"updated": updated})
 	default:
 		writeMethodNotAllowed(rw, http.MethodPost+", "+http.MethodDelete)
 	}
+}
+
+func writeAssociationMutationError(rw http.ResponseWriter, err error) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(rw, http.StatusNotFound, "not found")
+		return
+	}
+	writeError(rw, http.StatusBadRequest, err.Error())
 }
 
 func toGroupResources(models []db.Group) ([]groupResource, error) {

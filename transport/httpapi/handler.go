@@ -6,6 +6,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +15,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/engine"
 	"github.com/daeuniverse/dae-wing/orchestrator"
 )
@@ -21,22 +22,31 @@ import (
 const (
 	defaultOverviewWindowSec = 60
 	defaultOverviewMaxPoints = 16
+	maxOverviewWindowSec     = 60 * 60
+	maxOverviewMaxPoints     = 240
+	maxListLimit             = 200
+	maxJSONBodyBytes         = 1 << 20
+	defaultReloadTimeout     = 30 * time.Second
 	defaultStopTimeout       = 10 * time.Second
+	maxRuntimeTimeout        = 120 * time.Second
 	streamHeartbeatInterval  = 15 * time.Second
 )
 
 type runtimeOverviewResponse struct {
-	UpdatedAt         string                         `json:"updatedAt"`
-	UploadRate        string                         `json:"uploadRate"`
-	DownloadRate      string                         `json:"downloadRate"`
-	UploadTotal       string                         `json:"uploadTotal"`
-	DownloadTotal     string                         `json:"downloadTotal"`
-	ActiveConnections int                            `json:"activeConnections"`
-	UDPSessions       int                            `json:"udpSessions"`
-	RSSBytes          string                         `json:"rssBytes"`
-	HeapAllocBytes    string                         `json:"heapAllocBytes"`
-	Goroutines        int                            `json:"goroutines"`
-	Samples           []runtimeTrafficSampleResponse `json:"samples"`
+	UpdatedAt             string                         `json:"updatedAt"`
+	UploadRate            string                         `json:"uploadRate"`
+	DownloadRate          string                         `json:"downloadRate"`
+	UploadTotal           string                         `json:"uploadTotal"`
+	DownloadTotal         string                         `json:"downloadTotal"`
+	ActiveConnections     int                            `json:"activeConnections"`
+	UDPSessions           int                            `json:"udpSessions"`
+	UDPTaskQueues         int                            `json:"udpTaskQueues"`
+	UDPTaskDropTotal      string                         `json:"udpTaskDropTotal"`
+	PacketSnifferSessions int                            `json:"packetSnifferSessions"`
+	RSSBytes              string                         `json:"rssBytes"`
+	HeapAllocBytes        string                         `json:"heapAllocBytes"`
+	Goroutines            int                            `json:"goroutines"`
+	Samples               []runtimeTrafficSampleResponse `json:"samples"`
 }
 
 type runtimeTrafficSampleResponse struct {
@@ -50,7 +60,8 @@ type errorResponse struct {
 }
 
 type reloadRequest struct {
-	Dry bool `json:"dry"`
+	Dry        bool `json:"dry"`
+	TimeoutSec int  `json:"timeoutSec"`
 }
 
 type reloadResponse struct {
@@ -150,14 +161,19 @@ func handleRuntimeReload(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx := db.BeginTx(r.Context())
-	applied, err := orchestrator.Run(tx, req.Dry)
+	timeout, err := runtimeOperationTimeout(req.TimeoutSec, defaultReloadTimeout)
 	if err != nil {
-		tx.Rollback()
 		writeError(rw, http.StatusBadRequest, err.Error())
 		return
 	}
-	tx.Commit()
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	applied, err := orchestrator.Run(ctx, req.Dry)
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeJSON(rw, http.StatusOK, reloadResponse{
 		Applied: applied,
 		Dry:     req.Dry,
@@ -174,15 +190,30 @@ func handleRuntimeStop(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusBadRequest, err.Error())
 		return
 	}
-	timeout := defaultStopTimeout
-	if req.TimeoutSec > 0 {
-		timeout = time.Duration(req.TimeoutSec) * time.Second
+	timeout, err := runtimeOperationTimeout(req.TimeoutSec, defaultStopTimeout)
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
 	}
 	if err := orchestrator.Stop(r.Context(), timeout); err != nil {
 		writeError(rw, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(rw, http.StatusOK, stopResponse{Stopped: true})
+}
+
+func runtimeOperationTimeout(timeoutSec int, fallback time.Duration) (time.Duration, error) {
+	if timeoutSec < 0 {
+		return 0, fmt.Errorf("timeoutSec must not be negative")
+	}
+	if timeoutSec == 0 {
+		return fallback, nil
+	}
+	maxTimeoutSec := int(maxRuntimeTimeout / time.Second)
+	if timeoutSec > maxTimeoutSec {
+		return 0, fmt.Errorf("timeoutSec must not exceed %d", int(maxRuntimeTimeout/time.Second))
+	}
+	return time.Duration(timeoutSec) * time.Second, nil
 }
 
 func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
@@ -259,8 +290,8 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 }
 
 func runtimeOverviewQueryValues(r *http.Request) (windowSec int, maxPoints int) {
-	return parsePositiveInt(r.URL.Query().Get("windowSec"), defaultOverviewWindowSec),
-		parsePositiveInt(r.URL.Query().Get("maxPoints"), defaultOverviewMaxPoints)
+	return parsePositiveIntClamped(r.URL.Query().Get("windowSec"), defaultOverviewWindowSec, maxOverviewWindowSec),
+		parsePositiveIntClamped(r.URL.Query().Get("maxPoints"), defaultOverviewMaxPoints, maxOverviewMaxPoints)
 }
 
 func runtimeOverviewStreamInterval(windowSec int) time.Duration {
@@ -286,17 +317,20 @@ func runtimeOverviewFromModel(overview *engine.RuntimeOverview) runtimeOverviewR
 		})
 	}
 	return runtimeOverviewResponse{
-		UpdatedAt:         overview.UpdatedAt.Format(time.RFC3339Nano),
-		UploadRate:        strconv.FormatUint(overview.UploadRate, 10),
-		DownloadRate:      strconv.FormatUint(overview.DownloadRate, 10),
-		UploadTotal:       strconv.FormatUint(overview.UploadTotal, 10),
-		DownloadTotal:     strconv.FormatUint(overview.DownloadTotal, 10),
-		ActiveConnections: overview.ActiveConnections,
-		UDPSessions:       overview.UDPSessions,
-		RSSBytes:          strconv.FormatUint(overview.RSSBytes, 10),
-		HeapAllocBytes:    strconv.FormatUint(overview.HeapAllocBytes, 10),
-		Goroutines:        overview.Goroutines,
-		Samples:           samples,
+		UpdatedAt:             overview.UpdatedAt.Format(time.RFC3339Nano),
+		UploadRate:            strconv.FormatUint(overview.UploadRate, 10),
+		DownloadRate:          strconv.FormatUint(overview.DownloadRate, 10),
+		UploadTotal:           strconv.FormatUint(overview.UploadTotal, 10),
+		DownloadTotal:         strconv.FormatUint(overview.DownloadTotal, 10),
+		ActiveConnections:     overview.ActiveConnections,
+		UDPSessions:           overview.UDPSessions,
+		UDPTaskQueues:         overview.UDPTaskQueues,
+		UDPTaskDropTotal:      strconv.FormatUint(overview.UDPTaskDropTotal, 10),
+		PacketSnifferSessions: overview.PacketSnifferSessions,
+		RSSBytes:              strconv.FormatUint(overview.RSSBytes, 10),
+		HeapAllocBytes:        strconv.FormatUint(overview.HeapAllocBytes, 10),
+		Goroutines:            overview.Goroutines,
+		Samples:               samples,
 	}
 }
 
@@ -315,17 +349,20 @@ func runtimeOverviewDeltaFromModel(overview *engine.RuntimeOverview, after time.
 		lastSampleTimestamp = sample.Timestamp
 	}
 	payload := runtimeOverviewResponse{
-		UpdatedAt:         overview.UpdatedAt.Format(time.RFC3339Nano),
-		UploadRate:        strconv.FormatUint(overview.UploadRate, 10),
-		DownloadRate:      strconv.FormatUint(overview.DownloadRate, 10),
-		UploadTotal:       strconv.FormatUint(overview.UploadTotal, 10),
-		DownloadTotal:     strconv.FormatUint(overview.DownloadTotal, 10),
-		ActiveConnections: overview.ActiveConnections,
-		UDPSessions:       overview.UDPSessions,
-		RSSBytes:          strconv.FormatUint(overview.RSSBytes, 10),
-		HeapAllocBytes:    strconv.FormatUint(overview.HeapAllocBytes, 10),
-		Goroutines:        overview.Goroutines,
-		Samples:           samples,
+		UpdatedAt:             overview.UpdatedAt.Format(time.RFC3339Nano),
+		UploadRate:            strconv.FormatUint(overview.UploadRate, 10),
+		DownloadRate:          strconv.FormatUint(overview.DownloadRate, 10),
+		UploadTotal:           strconv.FormatUint(overview.UploadTotal, 10),
+		DownloadTotal:         strconv.FormatUint(overview.DownloadTotal, 10),
+		ActiveConnections:     overview.ActiveConnections,
+		UDPSessions:           overview.UDPSessions,
+		UDPTaskQueues:         overview.UDPTaskQueues,
+		UDPTaskDropTotal:      strconv.FormatUint(overview.UDPTaskDropTotal, 10),
+		PacketSnifferSessions: overview.PacketSnifferSessions,
+		RSSBytes:              strconv.FormatUint(overview.RSSBytes, 10),
+		HeapAllocBytes:        strconv.FormatUint(overview.HeapAllocBytes, 10),
+		Goroutines:            overview.Goroutines,
+		Samples:               samples,
 	}
 	return payload, lastSampleTimestamp
 }
@@ -343,11 +380,26 @@ func decodeJSONBody(r *http.Request, dst any) error {
 	}
 	defer r.Body.Close()
 
-	decoder := json.NewDecoder(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBodyBytes+1))
+	if err != nil {
+		return fmt.Errorf("read json body: %w", err)
+	}
+	if len(body) > maxJSONBodyBytes {
+		return fmt.Errorf("json body exceeds %d bytes", maxJSONBodyBytes)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
 		if err == io.EOF {
 			return nil
+		}
+		return fmt.Errorf("invalid json body: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("invalid json body: multiple json values")
 		}
 		return fmt.Errorf("invalid json body: %w", err)
 	}
@@ -363,6 +415,18 @@ func parsePositiveInt(raw string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func parsePositiveIntClamped(raw string, fallback int, maxValue int) int {
+	parsed := parsePositiveInt(raw, fallback)
+	if maxValue > 0 && parsed > maxValue {
+		return maxValue
+	}
+	return parsed
+}
+
+func parseListLimit(raw string) int {
+	return parsePositiveIntClamped(raw, 0, maxListLimit)
 }
 
 func writeJSON(rw http.ResponseWriter, status int, payload any) {

@@ -81,7 +81,7 @@ func handleNodes(rw http.ResponseWriter, r *http.Request) {
 		subscriptionID, hasSubscriptionID := parseOptionalUint(r.URL.Query().Get("subscriptionId"))
 		independentValue, hasIndependent := parseOptionalBool(r.URL.Query().Get("independent"))
 		afterID, hasAfterID := parseOptionalUint(r.URL.Query().Get("afterId"))
-		limitValue := parsePositiveInt(r.URL.Query().Get("limit"), 0)
+		limitValue := parseListLimit(r.URL.Query().Get("limit"))
 
 		var idPtr *uint
 		if id != 0 {
@@ -116,14 +116,14 @@ func handleNodes(rw http.ResponseWriter, r *http.Request) {
 		for _, model := range models {
 			items = append(items, toNodeResource(&model))
 		}
-			response := nodeListResponse{
-				Items:      items,
-				TotalCount: totalCount,
-			}
-			if limitPtr != nil && len(models) == *limitPtr {
-				nextAfterID := models[len(models)-1].ID
-				response.NextAfterID = &nextAfterID
-			}
+		response := nodeListResponse{
+			Items:      items,
+			TotalCount: totalCount,
+		}
+		if limitPtr != nil && len(models) == *limitPtr {
+			nextAfterID := models[len(models)-1].ID
+			response.NextAfterID = &nextAfterID
+		}
 		writeJSON(rw, http.StatusOK, response)
 	case http.MethodPost:
 		var req nodeImportRequest

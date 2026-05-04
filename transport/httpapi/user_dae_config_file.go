@@ -280,7 +280,7 @@ func previewDAEConfigFile(ctx context.Context, user *db.User, req *daeConfigFile
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := resolveImportedDAEConfig(resources)
+	resolved, err := resolveImportedDAEConfig(ctx, resources)
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +366,7 @@ func loadSelectedRuntimeResources(d *gorm.DB) (*db.Config, *db.Dns, *db.Routing,
 	return &selectedConfig, &selectedDNS, &selectedRouting, groups, subscriptions, independentNodes, nil
 }
 
-func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedImportedDAEConfig, error) {
+func resolveImportedDAEConfig(ctx context.Context, resources *importedDAEConfigResources) (*resolvedImportedDAEConfig, error) {
 	resolved := &resolvedImportedDAEConfig{
 		Warnings:      append([]daeConfigFileIssue(nil), resources.Warnings...),
 		ConfigName:    resources.ConfigName,
@@ -399,7 +399,7 @@ func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedI
 			Info:       "",
 		})
 
-		links, err := orchestrator.FetchSubscriptionLinks(item.Link)
+		links, err := orchestrator.FetchSubscriptionLinks(ctx, item.Link)
 		if err != nil {
 			return nil, fmt.Errorf("fetch subscription %q: %w", item.Link, err)
 		}
@@ -1397,7 +1397,7 @@ func replaceImportedDAEConfigResources(ctx context.Context, tx *gorm.DB, user *d
 		if item.Tag != nil {
 			subTagToSubscriptionID[*item.Tag] = model.ID
 		}
-		links, err := orchestrator.FetchSubscriptionLinks(item.Link)
+		links, err := orchestrator.FetchSubscriptionLinks(ctx, item.Link)
 		if err != nil {
 			return nil, fmt.Errorf("fetch subscription %q: %w", item.Link, err)
 		}

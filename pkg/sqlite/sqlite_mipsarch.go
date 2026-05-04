@@ -6,10 +6,16 @@
 package sqlite
 
 import (
+	"strings"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func Open(dsn string) gorm.Dialector {
-	return sqlite.Open(dsn)
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return sqlite.Open(dsn + sep + "_foreign_keys=on")
 }

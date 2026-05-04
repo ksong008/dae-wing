@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -30,7 +31,7 @@ import (
 
 func init() {
 	runCmd.PersistentFlags().StringVarP(&cfgDir, "config", "c", filepath.Join("/etc", db.AppName), "config directory")
-	runCmd.PersistentFlags().StringVarP(&listen, "listen", "l", "0.0.0.0:2023", "listening address")
+	runCmd.PersistentFlags().StringVarP(&listen, "listen", "l", "127.0.0.1:2023", "listening address")
 	runCmd.PersistentFlags().StringVar(&pprofListen, "pprof-listen", "", "optional local pprof listen address, e.g. 127.0.0.1:6061")
 	runCmd.PersistentFlags().BoolVar(&apiOnly, "api-only", false, "run control-plane backend without dae")
 	runCmd.PersistentFlags().StringVar(&logFile, "logfile", "", "Log file to write. Empty means writing to stdout and stderr.")
@@ -61,6 +62,8 @@ var (
 	listen            string
 	apiOnly           bool
 	pprofListen       string
+
+	restoreRunningTimeout = 30 * time.Second
 
 	runCmd = &cobra.Command{
 		Use:   "run",
@@ -109,19 +112,22 @@ var (
 				); err != nil {
 					logrus.Fatalln("dae.Run:", err)
 				}
-				os.Exit(1)
+				logrus.Infoln("dae runtime stopped; control-plane API remains available")
 			}()
 			// Reload with running state.
-			if err := orchestrator.RestoreRunningState(context.TODO()); err != nil {
+			restoreCtx, restoreCancel := context.WithTimeout(context.Background(), restoreRunningTimeout)
+			if err := orchestrator.RestoreRunningState(restoreCtx); err != nil {
 				logrus.Warnln("Failed to restore last running state:", err)
 			}
+			restoreCancel()
 
 			// ListenAndServe control-plane APIs.
 			mux := http.NewServeMux()
-			mux.Handle("/api/", auth(cors.AllowAll().Handler(http.StripPrefix("/api", httpapi.NewHandler()))))
+			mux.Handle("/api/", auth(controlPlaneCORS().Handler(http.StripPrefix("/api", httpapi.NewHandler()))))
 			if err := webrender.Handle(mux); err != nil {
 				errorExit(err)
 			}
+			server := newControlPlaneServer(listen, mux)
 			var pprofServer *http.Server
 			if pprofListen != "" {
 				pprofServer = &http.Server{
@@ -142,7 +148,7 @@ var (
 				}()
 			}
 			go func() {
-				host, port, _ := net.SplitHostPort(listen)
+				host, port, _ := net.SplitHostPort(server.Addr)
 				if host == "0.0.0.0" || host == "::" {
 					addrs, err := common.GetIfAddrs()
 					if err == nil {
@@ -153,9 +159,9 @@ var (
 						goto listenAndServe
 					}
 				}
-				logrus.Printf("Listen on %v", listen)
+				logrus.Printf("Listen on %v", server.Addr)
 			listenAndServe:
-				if err := http.ListenAndServe(listen, mux); err != nil {
+				if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					errorExit(err)
 				}
 			}()
@@ -168,6 +174,49 @@ var (
 		},
 	}
 )
+
+func newControlPlaneServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+}
+
+func controlPlaneCORS() *cors.Cors {
+	return cors.New(cors.Options{
+		AllowOriginFunc: isLocalOrigin,
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodOptions,
+		},
+		AllowedHeaders: []string{
+			"Authorization",
+			"Content-Type",
+		},
+		MaxAge: 300,
+	})
+}
+
+func isLocalOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 const (
 	runtimeEventsAPIPath       = "/api/events/runtime"
