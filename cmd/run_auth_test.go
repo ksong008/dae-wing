@@ -13,9 +13,9 @@ import (
 
 type requestContextKey struct{}
 
-func TestDefaultListenIsLoopback(t *testing.T) {
-	if listen != "127.0.0.1:2023" {
-		t.Fatalf("default listen = %q, want loopback", listen)
+func TestDefaultListenAllowsLAN(t *testing.T) {
+	if listen != "0.0.0.0:2023" {
+		t.Fatalf("default listen = %q, want LAN-accessible wildcard", listen)
 	}
 }
 

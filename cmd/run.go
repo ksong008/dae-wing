@@ -31,7 +31,7 @@ import (
 
 func init() {
 	runCmd.PersistentFlags().StringVarP(&cfgDir, "config", "c", filepath.Join("/etc", db.AppName), "config directory")
-	runCmd.PersistentFlags().StringVarP(&listen, "listen", "l", "127.0.0.1:2023", "listening address")
+	runCmd.PersistentFlags().StringVarP(&listen, "listen", "l", "0.0.0.0:2023", "listening address")
 	runCmd.PersistentFlags().StringVar(&pprofListen, "pprof-listen", "", "optional local pprof listen address, e.g. 127.0.0.1:6061")
 	runCmd.PersistentFlags().BoolVar(&apiOnly, "api-only", false, "run control-plane backend without dae")
 	runCmd.PersistentFlags().StringVar(&logFile, "logfile", "", "Log file to write. Empty means writing to stdout and stderr.")
