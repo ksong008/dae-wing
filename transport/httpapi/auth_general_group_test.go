@@ -520,12 +520,25 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("bind subscription group: %v", err)
 	}
+	subscriptionNodeGroup := db.Group{
+		Name:   "subnode",
+		Policy: "fixed",
+	}
+	if err := db.DB(context.Background()).Create(&subscriptionNodeGroup).Error; err != nil {
+		t.Fatalf("seed subscription-backed manual-node group: %v", err)
+	}
+	if err := db.DB(context.Background()).Model(&subscriptionNodeGroup).Association("Node").Append(&subNode); err != nil {
+		t.Fatalf("bind subscription-backed manual node: %v", err)
+	}
 
 	exportResp := performRawRequest(handler, http.MethodGet, "/user/me/dae-config-file", "", &user)
 	if exportResp.Code != http.StatusOK {
 		t.Fatalf("export dae config code = %d, body = %s", exportResp.Code, exportResp.Body.String())
 	}
 	exported := decodeBody(t, exportResp)
+	if warnings, ok := exported["warnings"].([]any); ok && len(warnings) > 0 {
+		t.Fatalf("unexpected export warnings = %#v", warnings)
+	}
 	content, ok := exported["content"].(string)
 	if !ok || content == "" {
 		t.Fatalf("exported content = %#v", exported["content"])
@@ -635,10 +648,17 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list groups after import: %v", err)
 	}
-	if len(groups) != 1 {
+	if len(groups) != 2 {
 		t.Fatalf("groups after import = %#v", groups)
 	}
-	importedGroup := groups[0]
+	groupByName := make(map[string]db.Group, len(groups))
+	for _, item := range groups {
+		groupByName[item.Name] = item
+	}
+	importedGroup, ok := groupByName["proxy"]
+	if !ok {
+		t.Fatalf("proxy group missing after import: %#v", groups)
+	}
 	if importedGroup.Name != "proxy" || importedGroup.Policy != "fixed" {
 		t.Fatalf("imported group = %#v", importedGroup)
 	}
@@ -647,6 +667,16 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	}
 	if len(importedGroup.SubscriptionBindings) != 1 || importedGroup.SubscriptionBindings[0].NameFilterRegex == nil || *importedGroup.SubscriptionBindings[0].NameFilterRegex != regex {
 		t.Fatalf("imported group subscription bindings = %#v", importedGroup.SubscriptionBindings)
+	}
+	subnodeGroup, ok := groupByName["subnode"]
+	if !ok {
+		t.Fatalf("subnode group missing after import: %#v", groups)
+	}
+	if len(subnodeGroup.SubscriptionBindings) != 0 {
+		t.Fatalf("subnode group bindings = %#v, want none", subnodeGroup.SubscriptionBindings)
+	}
+	if len(subnodeGroup.Node) != 1 || subnodeGroup.Node[0].Name != "sub-node" || subnodeGroup.Node[0].SubscriptionID == nil || *subnodeGroup.Node[0].SubscriptionID == 0 {
+		t.Fatalf("subnode group nodes = %#v", subnodeGroup.Node)
 	}
 }
 

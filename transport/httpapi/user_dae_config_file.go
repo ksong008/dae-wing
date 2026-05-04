@@ -382,6 +382,7 @@ func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedI
 	tagToNodeList := map[string][]string{}
 	nodeKeyByDialer := map[string]string{}
 	manualNodeByName := map[string]string{}
+	subscriptionNodeKeysByName := map[string][]string{}
 
 	for _, item := range resources.Subscriptions {
 		subTag := ""
@@ -419,6 +420,7 @@ func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedI
 			})
 			tagToNodeList[subTag] = append(tagToNodeList[subTag], link)
 			nodeKeyByDialer[dialerNodeKey(subTag, link)] = key
+			subscriptionNodeKeysByName[subTag+"\x00"+model.Name] = append(subscriptionNodeKeysByName[subTag+"\x00"+model.Name], key)
 		}
 	}
 
@@ -468,6 +470,14 @@ func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedI
 					return nil, fmt.Errorf("group %q references unknown node %q", group.Name, ref.Key)
 				}
 				nodeKeys[key] = struct{}{}
+			case ref.SubscriptionTag != "" && ref.SubscriptionTag != "*" && ref.Key != "":
+				keys, ok := subscriptionNodeKeysByName[ref.SubscriptionTag+"\x00"+ref.Key]
+				if !ok || len(keys) == 0 {
+					return nil, fmt.Errorf("group %q references unknown subscription node %q in subscription %q", group.Name, ref.Key, ref.SubscriptionTag)
+				}
+				for _, key := range keys {
+					nodeKeys[key] = struct{}{}
+				}
 			case ref.SubscriptionTag == "*" && ref.Key == "*":
 				for _, node := range resolved.Nodes {
 					nodeKeys[node.Key] = struct{}{}
@@ -637,12 +647,19 @@ func (s *nativeExportState) populate(conf *daeConfig.Config) []daeConfigFileIssu
 
 	subTagByID := make(map[uint]string)
 	manualNodeNameByID := make(map[uint]string)
+	subscriptionNodeNameCounts := make(map[uint]map[string]int)
 
 	seenSubscriptions := map[uint]*db.Subscription{}
 	seenIndependentNodes := map[uint]*db.Node{}
 	for i := range s.subscriptions {
 		subscription := s.subscriptions[i]
 		seenSubscriptions[subscription.ID] = &subscription
+		if _, ok := subscriptionNodeNameCounts[subscription.ID]; !ok {
+			subscriptionNodeNameCounts[subscription.ID] = make(map[string]int)
+		}
+		for _, node := range subscription.Node {
+			subscriptionNodeNameCounts[subscription.ID][node.Name]++
+		}
 	}
 	for i := range s.independentNodes {
 		node := s.independentNodes[i]
@@ -719,17 +736,42 @@ func (s *nativeExportState) populate(conf *daeConfig.Config) []daeConfigFileIssu
 				}
 				continue
 			}
-			warnings = append(warnings, daeConfigFileIssue{
-				Level:   daeConfigIssueLossy,
-				Code:    "group_subscription_node_flattened_on_export",
-				Message: fmt.Sprintf("group %q contains subscription-backed manual node %q; exported as name filter against node name", group.Name, node.Name),
-			})
-			appendFilter([]*config_parser.Function{{
-				Name: "name",
-				Params: []*config_parser.Param{
-					{Val: node.Name},
+			subTag, ok := subTagByID[*node.SubscriptionID]
+			if !ok {
+				warnings = append(warnings, daeConfigFileIssue{
+					Level:   daeConfigIssueLossy,
+					Code:    "group_subscription_node_flattened_on_export",
+					Message: fmt.Sprintf("group %q contains subscription-backed manual node %q without an exported subscription tag; exported as name filter against node name", group.Name, node.Name),
+				})
+				appendFilter([]*config_parser.Function{{
+					Name: "name",
+					Params: []*config_parser.Param{
+						{Val: node.Name},
+					},
+				}})
+				continue
+			}
+			if subscriptionNodeNameCounts[*node.SubscriptionID][node.Name] > 1 {
+				warnings = append(warnings, daeConfigFileIssue{
+					Level:   daeConfigIssueLossy,
+					Code:    "group_subscription_node_name_ambiguous_on_export",
+					Message: fmt.Sprintf("group %q contains subscription-backed manual node %q with a duplicated name in subscription %q; exported as subtag+name filter which may match multiple nodes", group.Name, node.Name, subTag),
+				})
+			}
+			appendFilter([]*config_parser.Function{
+				{
+					Name: "subtag",
+					Params: []*config_parser.Param{
+						{Val: subTag},
+					},
 				},
-			}})
+				{
+					Name: "name",
+					Params: []*config_parser.Param{
+						{Val: node.Name},
+					},
+				},
+			})
 		}
 		if len(manualNames) > 0 {
 			appendFilter([]*config_parser.Function{{
@@ -945,6 +987,13 @@ func parseImportedDAEConfig(req *daeConfigFileImportRequest) (*importedDAEConfig
 			continue
 		}
 		for _, alternative := range group.Filter {
+			if nodeRefs, ok, err := supportedExactSubscriptionNodeRefs(alternative); err != nil {
+				return nil, err
+			} else if ok {
+				imported.NodeRefs = append(imported.NodeRefs, nodeRefs...)
+				continue
+			}
+
 			if binding, ok, err := supportedSubscriptionBinding(alternative); err != nil {
 				return nil, err
 			} else if ok {
@@ -1042,6 +1091,45 @@ func supportedSubscriptionBinding(filters []*config_parser.Function) (*importedS
 	return binding, true, nil
 }
 
+func supportedExactSubscriptionNodeRefs(filters []*config_parser.Function) ([]importedNodeRef, bool, error) {
+	if len(filters) != 2 {
+		return nil, false, nil
+	}
+
+	var subtag *config_parser.Function
+	var nameFilter *config_parser.Function
+	for _, filter := range filters {
+		switch filter.Name {
+		case "subtag":
+			subtag = filter
+		case "name":
+			nameFilter = filter
+		default:
+			return nil, false, nil
+		}
+		if filter.Not {
+			return nil, false, nil
+		}
+	}
+	if subtag == nil || nameFilter == nil || len(subtag.Params) != 1 || subtag.Params[0].Key != "" {
+		return nil, false, nil
+	}
+
+	exactNames, ok := convertNameFilterToExactNames(nameFilter)
+	if !ok || len(exactNames) == 0 {
+		return nil, false, nil
+	}
+
+	refs := make([]importedNodeRef, 0, len(exactNames))
+	for _, name := range exactNames {
+		refs = append(refs, importedNodeRef{
+			SubscriptionTag: subtag.Params[0].Val,
+			Key:             name,
+		})
+	}
+	return refs, true, nil
+}
+
 func supportedManualNodeRefs(filters []*config_parser.Function, manualNodeByName map[string]importedNodeRef) ([]importedNodeRef, error) {
 	if len(filters) != 1 {
 		return nil, nil
@@ -1062,6 +1150,20 @@ func supportedManualNodeRefs(filters []*config_parser.Function, manualNodeByName
 		refs = append(refs, ref)
 	}
 	return refs, nil
+}
+
+func convertNameFilterToExactNames(filter *config_parser.Function) ([]string, bool) {
+	if filter == nil || filter.Name != "name" || filter.Not || len(filter.Params) == 0 {
+		return nil, false
+	}
+	names := make([]string, 0, len(filter.Params))
+	for _, param := range filter.Params {
+		if param.Key != "" {
+			return nil, false
+		}
+		names = append(names, param.Val)
+	}
+	return names, true
 }
 
 func convertNameFilterToRegex(filter *config_parser.Function) (*string, bool) {
@@ -1167,6 +1269,7 @@ func replaceImportedDAEConfigResources(ctx context.Context, tx *gorm.DB, user *d
 	}
 
 	manualNodeMap := map[string]*db.Node{}
+	subscriptionNodeMap := map[string][]*db.Node{}
 	tagToNodeList := map[string][]string{}
 	subTagToSubscriptionID := map[string]uint{}
 	newSubscriptionIDs := make([]uint, 0, len(resources.Subscriptions))
@@ -1205,6 +1308,15 @@ func replaceImportedDAEConfigResources(ctx context.Context, tx *gorm.DB, user *d
 		}
 		if !hasAnyImportedNodeResults(results) {
 			return nil, fmt.Errorf("subscription %q imported no usable nodes", item.Link)
+		}
+		if item.Tag != nil && *item.Tag != "" {
+			for _, result := range results {
+				if result == nil || result.Node == nil {
+					continue
+				}
+				key := *item.Tag + "\x00" + result.Node.Name
+				subscriptionNodeMap[key] = append(subscriptionNodeMap[key], result.Node)
+			}
 		}
 	}
 
@@ -1271,6 +1383,17 @@ func replaceImportedDAEConfigResources(ctx context.Context, tx *gorm.DB, user *d
 					return nil, fmt.Errorf("group %q references unknown node %q", item.Name, ref.Key)
 				}
 				nodeIDs[node.ID] = struct{}{}
+				continue
+			}
+
+			if ref.SubscriptionTag != "*" {
+				nodes, ok := subscriptionNodeMap[ref.SubscriptionTag+"\x00"+ref.Key]
+				if !ok || len(nodes) == 0 {
+					return nil, fmt.Errorf("group %q references unknown subscription node %q in subscription %q", item.Name, ref.Key, ref.SubscriptionTag)
+				}
+				for _, node := range nodes {
+					nodeIDs[node.ID] = struct{}{}
+				}
 				continue
 			}
 
