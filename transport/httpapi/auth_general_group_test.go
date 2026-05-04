@@ -2,10 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/orchestrator"
@@ -192,6 +195,389 @@ func TestGeneralAndGroupHandlers(t *testing.T) {
 	updateGroup := performRawRequest(handler, http.MethodPut, "/groups/"+itoa(groupID), `{"policy":"fixed","policyParams":[]}`, &user)
 	if updateGroup.Code != http.StatusOK {
 		t.Fatalf("update group code = %d, body = %s", updateGroup.Code, updateGroup.Body.String())
+	}
+}
+
+func TestUserDAEBundleHandlers(t *testing.T) {
+	if err := db.InitDatabase(t.TempDir()); err != nil {
+		t.Fatalf("init database: %v", err)
+	}
+	handler := NewHandler()
+
+	if token, err := orchestrator.CreateUser(context.Background(), "admin", "abc123"); err != nil || token == "" {
+		t.Fatalf("seed auth user: %v", err)
+	}
+	var user db.User
+	if err := db.DB(context.Background()).Where("username = ?", "admin").First(&user).Error; err != nil {
+		t.Fatalf("load auth user: %v", err)
+	}
+
+	cfgActive := db.Config{Name: "cfg-active", Global: "global {\n  log_level: info\n}", Selected: true}
+	cfgDefault := db.Config{Name: "cfg-default", Global: "global {\n  log_level: warn\n}", Selected: false}
+	if err := db.DB(context.Background()).Create(&cfgActive).Error; err != nil {
+		t.Fatalf("seed active config: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&cfgDefault).Error; err != nil {
+		t.Fatalf("seed default config: %v", err)
+	}
+
+	dnsActive := db.Dns{Name: "dns-active", Dns: "dns {\n  upstream {\n    googledns: 'udp://8.8.8.8:53'\n  }\n}", Selected: true}
+	dnsDefault := db.Dns{Name: "dns-default", Dns: "dns {\n  upstream {\n    alidns: 'udp://223.5.5.5:53'\n  }\n}", Selected: false}
+	if err := db.DB(context.Background()).Create(&dnsActive).Error; err != nil {
+		t.Fatalf("seed active dns: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&dnsDefault).Error; err != nil {
+		t.Fatalf("seed default dns: %v", err)
+	}
+
+	routingActive := db.Routing{Name: "routing-active", Routing: "routing {\n  fallback: proxy\n}", Selected: true}
+	routingDefault := db.Routing{Name: "routing-default", Routing: "routing {\n  fallback: direct\n}", Selected: false}
+	if err := db.DB(context.Background()).Create(&routingActive).Error; err != nil {
+		t.Fatalf("seed active routing: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&routingDefault).Error; err != nil {
+		t.Fatalf("seed default routing: %v", err)
+	}
+
+	subTag := "sub-backup"
+	subscription := db.Subscription{
+		UpdatedAt:  time.Unix(1_717_171_717, 0).UTC(),
+		Link:       "https://example.invalid/subscription",
+		CronExp:    "10 */6 * * *",
+		CronEnable: true,
+		Status:     "ok",
+		Info:       "provider",
+		Tag:        &subTag,
+	}
+	if err := db.DB(context.Background()).Create(&subscription).Error; err != nil {
+		t.Fatalf("seed subscription: %v", err)
+	}
+
+	manualTag := "manual-node"
+	manualNode := db.Node{Link: "ss://manual", Name: "Manual", Address: "127.0.0.1", Protocol: "ss", Tag: &manualTag}
+	subNode := db.Node{Link: "ss://subscription", Name: "Subscription", Address: "127.0.0.2", Protocol: "ss", SubscriptionID: &subscription.ID}
+	if err := db.DB(context.Background()).Create(&manualNode).Error; err != nil {
+		t.Fatalf("seed manual node: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&subNode).Error; err != nil {
+		t.Fatalf("seed subscription node: %v", err)
+	}
+
+	regex := "^HK"
+	group := db.Group{
+		Name:   "proxy",
+		Policy: "fixed",
+		PolicyParams: []db.GroupPolicyParam{{
+			Key:   "index",
+			Value: "0",
+		}},
+	}
+	if err := db.DB(context.Background()).Create(&group).Error; err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if err := db.DB(context.Background()).Model(&group).Association("Node").Append(&manualNode); err != nil {
+		t.Fatalf("bind group node: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&db.GroupSubscription{
+		GroupID:         group.ID,
+		SubscriptionID:  subscription.ID,
+		NameFilterRegex: &regex,
+	}).Error; err != nil {
+		t.Fatalf("bind group subscription: %v", err)
+	}
+
+	tx := db.BeginTx(context.Background())
+	if err := setJSONStorageWithTx(tx, &user, []string{"defaultConfigID", "defaultRoutingID", "defaultDNSID", "defaultGroupID", "mode"}, []string{
+		itoa(int(cfgDefault.ID)),
+		itoa(int(routingDefault.ID)),
+		itoa(int(dnsDefault.ID)),
+		itoa(int(group.ID)),
+		"rule",
+	}); err != nil {
+		t.Fatalf("seed defaults storage: %v", err)
+	}
+	if err := tx.Commit().Error; err != nil {
+		t.Fatalf("commit defaults storage: %v", err)
+	}
+
+	exportResp := performRawRequest(handler, http.MethodGet, "/user/me/dae-bundle", "", &user)
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("export bundle code = %d, body = %s", exportResp.Code, exportResp.Body.String())
+	}
+
+	var bundle daeBundle
+	if err := json.Unmarshal(exportResp.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode bundle: %v", err)
+	}
+	if bundle.SchemaVersion != daeBundleSchemaVersion {
+		t.Fatalf("bundle schema version = %d, want %d", bundle.SchemaVersion, daeBundleSchemaVersion)
+	}
+	if len(bundle.Configs) != 2 || len(bundle.DNSS) != 2 || len(bundle.Routings) != 2 {
+		t.Fatalf("bundle resource counts = configs:%d dnss:%d routings:%d", len(bundle.Configs), len(bundle.DNSS), len(bundle.Routings))
+	}
+	if len(bundle.Subscriptions) != 1 || len(bundle.Nodes) != 2 || len(bundle.Groups) != 1 {
+		t.Fatalf("bundle graph counts = subscriptions:%d nodes:%d groups:%d", len(bundle.Subscriptions), len(bundle.Nodes), len(bundle.Groups))
+	}
+	if bundle.Selected.ConfigID == nil || *bundle.Selected.ConfigID != cfgActive.ID {
+		t.Fatalf("bundle selected config = %#v, want %d", bundle.Selected.ConfigID, cfgActive.ID)
+	}
+	if bundle.Defaults.ConfigID == nil || *bundle.Defaults.ConfigID != cfgDefault.ID {
+		t.Fatalf("bundle default config = %#v, want %d", bundle.Defaults.ConfigID, cfgDefault.ID)
+	}
+
+	if err := db.DB(context.Background()).Create(&db.Config{Name: "extra-config", Global: "global {}", Selected: false}).Error; err != nil {
+		t.Fatalf("seed extra config: %v", err)
+	}
+
+	importResp := performRawRequest(handler, http.MethodPut, "/user/me/dae-bundle", exportResp.Body.String(), &user)
+	if importResp.Code != http.StatusOK {
+		t.Fatalf("import bundle code = %d, body = %s", importResp.Code, importResp.Body.String())
+	}
+
+	var configs []db.Config
+	if err := db.DB(context.Background()).Order("id asc").Find(&configs).Error; err != nil {
+		t.Fatalf("reload configs: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("config count after import = %d, want 2", len(configs))
+	}
+	var selectedConfig db.Config
+	if err := db.DB(context.Background()).Where("selected = ?", true).First(&selectedConfig).Error; err != nil {
+		t.Fatalf("selected config after import: %v", err)
+	}
+	if selectedConfig.Name != "cfg-active" {
+		t.Fatalf("selected config after import = %q, want cfg-active", selectedConfig.Name)
+	}
+
+	if err := db.DB(context.Background()).Where("username = ?", "admin").First(&user).Error; err != nil {
+		t.Fatalf("reload user after import: %v", err)
+	}
+	defaults := orchestrator.QueryJSONStorage(&user, []string{"defaultConfigID", "defaultRoutingID", "defaultDNSID", "defaultGroupID", "mode"})
+	if len(defaults) != 5 || defaults[4] != "rule" {
+		t.Fatalf("defaults after import = %#v", defaults)
+	}
+	defaultConfigID, ok := parseStoredUint(defaults[0])
+	if !ok {
+		t.Fatalf("default config id not stored: %#v", defaults[0])
+	}
+	var defaultConfig db.Config
+	if err := db.DB(context.Background()).First(&defaultConfig, defaultConfigID).Error; err != nil {
+		t.Fatalf("load default config after import: %v", err)
+	}
+	if defaultConfig.Name != "cfg-default" {
+		t.Fatalf("default config after import = %q, want cfg-default", defaultConfig.Name)
+	}
+
+	groups, err := orchestrator.ListGroups(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("list groups after import: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("group count after import = %d, want 1", len(groups))
+	}
+	importedGroup := groups[0]
+	if importedGroup.Name != "proxy" {
+		t.Fatalf("imported group name = %q, want proxy", importedGroup.Name)
+	}
+	if len(importedGroup.Node) != 1 || importedGroup.Node[0].Tag == nil || *importedGroup.Node[0].Tag != manualTag {
+		t.Fatalf("imported group nodes = %#v", importedGroup.Node)
+	}
+	if len(importedGroup.SubscriptionBindings) != 1 {
+		t.Fatalf("imported group bindings = %#v", importedGroup.SubscriptionBindings)
+	}
+	if importedGroup.SubscriptionBindings[0].NameFilterRegex == nil || *importedGroup.SubscriptionBindings[0].NameFilterRegex != regex {
+		t.Fatalf("imported group regex = %#v", importedGroup.SubscriptionBindings[0].NameFilterRegex)
+	}
+}
+
+func TestUserDAEConfigFileHandlers(t *testing.T) {
+	if err := db.InitDatabase(t.TempDir()); err != nil {
+		t.Fatalf("init database: %v", err)
+	}
+	handler := NewHandler()
+
+	if token, err := orchestrator.CreateUser(context.Background(), "admin", "abc123"); err != nil || token == "" {
+		t.Fatalf("seed auth user: %v", err)
+	}
+	var user db.User
+	if err := db.DB(context.Background()).Where("username = ?", "admin").First(&user).Error; err != nil {
+		t.Fatalf("load auth user: %v", err)
+	}
+
+	subServer := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		_, _ = rw.Write([]byte("c3M6Ly8yMDIyLWJsYWtlMy1hZXMtMTI4LWdjbTpNVEl6TkRVMk56ZzVNREV5TXpRMU5nPT1AZXhhbXBsZS5jb206NDQzI3N1Yi1ub2RlCg=="))
+	}))
+	defer subServer.Close()
+
+	cfg := db.Config{Name: "active", Global: "global {\n  log_level: info\n}", Selected: true}
+	dns := db.Dns{Name: "active_dns", Dns: "dns {\n  upstream {\n    googledns: 'udp://1.1.1.1:53'\n  }\n  routing {\n    request {\n      fallback: googledns\n    }\n  }\n}", Selected: true}
+	routing := db.Routing{Name: "active_routing", Routing: "routing {\n  fallback: proxy\n}", Selected: true}
+	if err := db.DB(context.Background()).Create(&cfg).Error; err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&dns).Error; err != nil {
+		t.Fatalf("seed dns: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&routing).Error; err != nil {
+		t.Fatalf("seed routing: %v", err)
+	}
+
+	subTag := "suba"
+	subscription := db.Subscription{
+		UpdatedAt:  time.Now(),
+		Link:       subServer.URL,
+		CronExp:    "10 */6 * * *",
+		CronEnable: true,
+		Status:     "ok",
+		Info:       "seed",
+		Tag:        &subTag,
+	}
+	if err := db.DB(context.Background()).Create(&subscription).Error; err != nil {
+		t.Fatalf("seed subscription: %v", err)
+	}
+	subNode := db.Node{
+		Link:           "ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@example.com:443#sub-node",
+		Name:           "sub-node",
+		Address:        "example.com:443",
+		Protocol:       "shadowsocks",
+		SubscriptionID: &subscription.ID,
+	}
+	manualTag := "manual-node"
+	manualNode := db.Node{
+		Link:     "ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@manual.example:443#manual",
+		Name:     "manual",
+		Address:  "manual.example:443",
+		Protocol: "shadowsocks",
+		Tag:      &manualTag,
+	}
+	if err := db.DB(context.Background()).Create(&subNode).Error; err != nil {
+		t.Fatalf("seed subscription node: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&manualNode).Error; err != nil {
+		t.Fatalf("seed manual node: %v", err)
+	}
+
+	regex := "^sub-"
+	group := db.Group{
+		Name:   "proxy",
+		Policy: "fixed",
+		PolicyParams: []db.GroupPolicyParam{{
+			Key:   "",
+			Value: "0",
+		}},
+	}
+	if err := db.DB(context.Background()).Create(&group).Error; err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if err := db.DB(context.Background()).Model(&group).Association("Node").Append(&manualNode); err != nil {
+		t.Fatalf("bind manual node: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&db.GroupSubscription{
+		GroupID:         group.ID,
+		SubscriptionID:  subscription.ID,
+		NameFilterRegex: &regex,
+	}).Error; err != nil {
+		t.Fatalf("bind subscription group: %v", err)
+	}
+
+	exportResp := performRawRequest(handler, http.MethodGet, "/user/me/dae-config-file", "", &user)
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("export dae config code = %d, body = %s", exportResp.Code, exportResp.Body.String())
+	}
+	exported := decodeBody(t, exportResp)
+	content, ok := exported["content"].(string)
+	if !ok || content == "" {
+		t.Fatalf("exported content = %#v", exported["content"])
+	}
+	if !strings.Contains(content, "subscription {") || !strings.Contains(content, "node {") || !strings.Contains(content, "group {") {
+		t.Fatalf("exported content missing expected sections:\n%s", content)
+	}
+	if !strings.Contains(content, `subtag("suba")`) {
+		t.Fatalf("exported content missing subtag binding:\n%s", content)
+	}
+	if !strings.Contains(content, `name("manual-node")`) {
+		t.Fatalf("exported content missing manual node filter:\n%s", content)
+	}
+
+	if err := db.DB(context.Background()).Create(&db.Config{Name: "extra", Global: "global {}", Selected: false}).Error; err != nil {
+		t.Fatalf("seed extra config: %v", err)
+	}
+
+	importBody := fmt.Sprintf(`{"filename":"selected.dae","namePrefix":"restored","content":%q}`, content)
+	previewResp := performRawRequest(handler, http.MethodPost, "/user/me/dae-config-file/preview", importBody, &user)
+	if previewResp.Code != http.StatusOK {
+		t.Fatalf("preview dae config code = %d, body = %s", previewResp.Code, previewResp.Body.String())
+	}
+	previewBody := decodeBody(t, previewResp)
+	previewBundle, ok := previewBody["bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("preview bundle = %#v", previewBody["bundle"])
+	}
+	if got := previewBundle["mode"].(string); got != "rule" {
+		t.Fatalf("preview bundle mode = %q, want rule", got)
+	}
+	previewConfigs := previewBundle["configs"].([]any)
+	if len(previewConfigs) != 1 {
+		t.Fatalf("preview configs len = %d, want 1", len(previewConfigs))
+	}
+	firstPreviewConfig := previewConfigs[0].(map[string]any)
+	if got := firstPreviewConfig["name"].(string); got != "restored" {
+		t.Fatalf("preview config name = %q, want restored", got)
+	}
+
+	importResp := performRawRequest(handler, http.MethodPut, "/user/me/dae-config-file", importBody, &user)
+	if importResp.Code != http.StatusOK {
+		t.Fatalf("import dae config code = %d, body = %s", importResp.Code, importResp.Body.String())
+	}
+
+	var configs []db.Config
+	if err := db.DB(context.Background()).Find(&configs).Error; err != nil {
+		t.Fatalf("load configs after import: %v", err)
+	}
+	if len(configs) != 1 || configs[0].Name != "restored" || !configs[0].Selected {
+		t.Fatalf("configs after import = %#v", configs)
+	}
+
+	var dnss []db.Dns
+	if err := db.DB(context.Background()).Find(&dnss).Error; err != nil {
+		t.Fatalf("load dns after import: %v", err)
+	}
+	if len(dnss) != 1 || dnss[0].Name != "restored_dns" || !dnss[0].Selected {
+		t.Fatalf("dns after import = %#v", dnss)
+	}
+
+	var routings []db.Routing
+	if err := db.DB(context.Background()).Find(&routings).Error; err != nil {
+		t.Fatalf("load routing after import: %v", err)
+	}
+	if len(routings) != 1 || routings[0].Name != "restored_routing" || !routings[0].Selected {
+		t.Fatalf("routing after import = %#v", routings)
+	}
+
+	var subscriptions []db.Subscription
+	if err := db.DB(context.Background()).Find(&subscriptions).Error; err != nil {
+		t.Fatalf("load subscriptions after import: %v", err)
+	}
+	if len(subscriptions) != 1 || subscriptions[0].Tag == nil || *subscriptions[0].Tag != "suba" {
+		t.Fatalf("subscriptions after import = %#v", subscriptions)
+	}
+
+	groups, err := orchestrator.ListGroups(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("list groups after import: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("groups after import = %#v", groups)
+	}
+	importedGroup := groups[0]
+	if importedGroup.Name != "proxy" || importedGroup.Policy != "fixed" {
+		t.Fatalf("imported group = %#v", importedGroup)
+	}
+	if len(importedGroup.Node) != 1 || importedGroup.Node[0].Tag == nil || *importedGroup.Node[0].Tag != manualTag {
+		t.Fatalf("imported group nodes = %#v", importedGroup.Node)
+	}
+	if len(importedGroup.SubscriptionBindings) != 1 || importedGroup.SubscriptionBindings[0].NameFilterRegex == nil || *importedGroup.SubscriptionBindings[0].NameFilterRegex != regex {
+		t.Fatalf("imported group subscription bindings = %#v", importedGroup.SubscriptionBindings)
 	}
 }
 

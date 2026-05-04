@@ -22,6 +22,7 @@ type configResource struct {
 	Name         string         `json:"name"`
 	Global       string         `json:"global"`
 	ParsedGlobal map[string]any `json:"parsedGlobal,omitempty"`
+	ParseError   string         `json:"parseError,omitempty"`
 	Selected     bool           `json:"selected"`
 	Version      uint           `json:"version"`
 }
@@ -290,10 +291,10 @@ func handleDNSResources(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-			model := db.Dns{
-				Name: optionalString(req.Name),
-				Dns:  normalizeEnsureSection("dns", optionalString(req.DNS), engine.Default().EmptyDnsSection()),
-			}
+		model := db.Dns{
+			Name: optionalString(req.Name),
+			Dns:  normalizeEnsureSection("dns", optionalString(req.DNS), engine.Default().EmptyDnsSection()),
+		}
 		if _, err := engine.Default().ParseConfig(nil, &model.Dns, nil); err != nil {
 			writeError(rw, http.StatusBadRequest, err.Error())
 			return
@@ -358,9 +359,9 @@ func handleDNSResource(rw http.ResponseWriter, r *http.Request) {
 		if req.Name != nil {
 			updates["name"] = *req.Name
 		}
-			if req.DNS != nil {
-				dnsSection := normalizeEnsureSection("dns", *req.DNS, engine.Default().EmptyDnsSection())
-				if _, err := engine.Default().ParseConfig(nil, &dnsSection, nil); err != nil {
+		if req.DNS != nil {
+			dnsSection := normalizeEnsureSection("dns", *req.DNS, engine.Default().EmptyDnsSection())
+			if _, err := engine.Default().ParseConfig(nil, &dnsSection, nil); err != nil {
 				tx.Rollback()
 				writeError(rw, http.StatusBadRequest, err.Error())
 				return
@@ -460,10 +461,10 @@ func handleRoutings(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-			model := db.Routing{
-				Name:    optionalString(req.Name),
-				Routing: normalizeEnsureSection("routing", optionalString(req.Routing), engine.Default().EmptyRoutingSection()),
-			}
+		model := db.Routing{
+			Name:    optionalString(req.Name),
+			Routing: normalizeEnsureSection("routing", optionalString(req.Routing), engine.Default().EmptyRoutingSection()),
+		}
 		if _, err := engine.Default().ParseConfig(nil, nil, &model.Routing); err != nil {
 			writeError(rw, http.StatusBadRequest, err.Error())
 			return
@@ -528,9 +529,9 @@ func handleRoutingResource(rw http.ResponseWriter, r *http.Request) {
 		if req.Name != nil {
 			updates["name"] = *req.Name
 		}
-			if req.Routing != nil {
-				routingSection := normalizeEnsureSection("routing", *req.Routing, engine.Default().EmptyRoutingSection())
-				if _, err := engine.Default().ParseConfig(nil, nil, &routingSection); err != nil {
+		if req.Routing != nil {
+			routingSection := normalizeEnsureSection("routing", *req.Routing, engine.Default().EmptyRoutingSection())
+			if _, err := engine.Default().ParseConfig(nil, nil, &routingSection); err != nil {
 				tx.Rollback()
 				writeError(rw, http.StatusBadRequest, err.Error())
 				return

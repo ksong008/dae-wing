@@ -298,6 +298,86 @@ func TestConfigStructuredGlobalInputHandlers(t *testing.T) {
 	}
 }
 
+func TestConfigExpandParsedToleratesBrokenStoredGlobal(t *testing.T) {
+	if err := db.InitDatabase(t.TempDir()); err != nil {
+		t.Fatalf("init database: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&db.Config{
+		Name:   "broken-config",
+		Global: "global {\n  log_level: \n}",
+	}).Error; err != nil {
+		t.Fatalf("seed broken config: %v", err)
+	}
+
+	handler := NewHandler()
+
+	list := performJSONRequest(t, handler, http.MethodGet, "/configs?expand=parsed", "")
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", list.Code, list.Body.String())
+	}
+	var listed struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(listed.Items))
+	}
+	if got := listed.Items[0]["global"].(string); !strings.Contains(got, "log_level") {
+		t.Fatalf("global = %q, want raw broken body", got)
+	}
+	if _, ok := listed.Items[0]["parsedGlobal"]; ok {
+		t.Fatalf("parsedGlobal should be omitted when parsing fails")
+	}
+	if got, ok := listed.Items[0]["parseError"].(string); !ok || got == "" {
+		t.Fatalf("parseError = %#v, want non-empty string", listed.Items[0]["parseError"])
+	}
+
+	id := int(listed.Items[0]["id"].(float64))
+	get := performJSONRequest(t, handler, http.MethodGet, "/configs/"+itoa(id), "")
+	if get.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", get.Code, get.Body.String())
+	}
+	fetched := decodeBody(t, get)
+	if _, ok := fetched["parsedGlobal"]; ok {
+		t.Fatalf("parsedGlobal should be omitted on single read when parsing fails")
+	}
+	if got, ok := fetched["parseError"].(string); !ok || got == "" {
+		t.Fatalf("single parseError = %#v, want non-empty string", fetched["parseError"])
+	}
+}
+
+func TestParsedConfigPreviewHandlers(t *testing.T) {
+	handler := NewHandler()
+
+	rawPreview := performJSONRequest(t, handler, http.MethodPost, "/configs/parsed", `{"global":"global {\n  log_level: debug\n  tproxy_port: 12345\n}"}`)
+	if rawPreview.Code != http.StatusOK {
+		t.Fatalf("raw preview status = %d, body = %s", rawPreview.Code, rawPreview.Body.String())
+	}
+	rawBody := decodeBody(t, rawPreview)
+	if got := rawBody["global"].(string); !strings.Contains(got, "tproxy_port: 12345") {
+		t.Fatalf("preview global = %q, want normalized raw body", got)
+	}
+	parsedGlobal := rawBody["parsedGlobal"].(map[string]any)
+	if got := parsedGlobal["logLevel"].(string); got != "debug" {
+		t.Fatalf("preview parsedGlobal.logLevel = %q, want debug", got)
+	}
+
+	parsedPreview := performJSONRequest(t, handler, http.MethodPost, "/configs/parsed", `{"parsedGlobal":{"logLevel":"warn","disableWaitingNetwork":true}}`)
+	if parsedPreview.Code != http.StatusOK {
+		t.Fatalf("structured preview status = %d, body = %s", parsedPreview.Code, parsedPreview.Body.String())
+	}
+	parsedBody := decodeBody(t, parsedPreview)
+	if got := parsedBody["global"].(string); !strings.Contains(got, "log_level:") || !strings.Contains(got, "disable_waiting_network:") {
+		t.Fatalf("structured preview global = %q, want marshaled body", got)
+	}
+	structuredParsed := parsedBody["parsedGlobal"].(map[string]any)
+	if got := structuredParsed["disableWaitingNetwork"].(bool); !got {
+		t.Fatalf("structured parsedGlobal.disableWaitingNetwork = false, want true")
+	}
+}
+
 func TestParsedPreviewHandlers(t *testing.T) {
 	handler := NewHandler()
 

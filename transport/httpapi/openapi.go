@@ -73,7 +73,8 @@ func openAPIPaths() map[string]any {
 				"responses": map[string]any{"201": jsonResponse("User created.", "TokenResponse")},
 			},
 		},
-		"/api/configs": resourceCollectionPath("configs", "config", "ConfigResource", "ConfigList", "ConfigCreateRequest"),
+		"/api/configs":        resourceCollectionPath("configs", "config", "ConfigResource", "ConfigList", "ConfigCreateRequest"),
+		"/api/configs/parsed": configPreviewPath(),
 		"/api/configs/flat-desc": map[string]any{
 			"get": map[string]any{
 				"summary":     "List config flat descriptors",
@@ -130,7 +131,50 @@ func openAPIPaths() map[string]any {
 				"responses": map[string]any{"200": jsonResponse("User updated.", "UserResource")},
 			},
 		},
-		"/api/user/me/default-resources": map[string]any{
+		"/api/user/me/dae-bundle": map[string]any{
+			"get": map[string]any{
+				"summary":     "Export dae control-plane bundle",
+				"description": "Exports configs, dns, routings, groups, subscriptions, nodes, and default selection metadata as a single JSON bundle.",
+				"responses":   map[string]any{"200": jsonResponse("dae bundle exported.", "DAEBundle")},
+			},
+			"put": map[string]any{
+				"summary":     "Import dae control-plane bundle",
+				"description": "Replaces the stored control-plane resources with one JSON bundle and restores selected/default resources plus mode.",
+				"requestBody": map[string]any{
+					"required": true,
+					"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("DAEBundle")}},
+				},
+				"responses": map[string]any{"200": jsonResponse("dae bundle imported.", "BooleanResult")},
+			},
+		},
+			"/api/user/me/dae-config-file": map[string]any{
+			"get": map[string]any{
+				"summary":     "Export dae config file",
+				"description": "Exports the currently selected config, dns, routing, and referenced group resources as a native dae configuration file.",
+				"responses":   map[string]any{"200": jsonResponse("dae config file exported.", "DAEConfigFileResponse")},
+			},
+			"put": map[string]any{
+				"summary":     "Import dae config file",
+				"description": "Parses a native dae configuration file and replaces the current control-plane resources with the imported model.",
+				"requestBody": map[string]any{
+					"required": true,
+					"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("DAEConfigFileImportRequest")}},
+				},
+					"responses": map[string]any{"200": jsonResponse("dae config file imported.", "DAEConfigFileImportResponse")},
+				},
+			},
+			"/api/user/me/dae-config-file/preview": map[string]any{
+				"post": map[string]any{
+					"summary":     "Preview dae config file import",
+					"description": "Parses a native dae configuration file and returns the projected control-plane snapshot plus import warnings without changing stored resources.",
+					"requestBody": map[string]any{
+						"required": true,
+						"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("DAEConfigFileImportRequest")}},
+					},
+					"responses": map[string]any{"200": jsonResponse("dae config file preview.", "DAEConfigFilePreviewResponse")},
+				},
+			},
+			"/api/user/me/default-resources": map[string]any{
 			"post": map[string]any{
 				"summary":     "Ensure current user default resources",
 				"description": "Ensures default config, routing, dns, group, and mode values for the authenticated user and persists them into JSON storage.",
@@ -423,6 +467,13 @@ func openAPISchemas() map[string]any {
 		},
 		"ConfigResource": configResourceSchema(),
 		"ConfigList":     listSchema("ConfigResource"),
+		"ParsedConfigResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"global":       map[string]any{"type": "string"},
+				"parsedGlobal": parsedGlobalSchema(),
+			},
+		},
 		"ConfigFlatDesc": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -620,6 +671,143 @@ func openAPISchemas() map[string]any {
 				"values": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
 		},
+		"BooleanResult": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"imported": map[string]any{"type": "boolean"},
+			},
+		},
+		"DAEConfigFileResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"filename": map[string]any{"type": "string"},
+				"content":  map[string]any{"type": "string"},
+				"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+		},
+		"DAEConfigFileImportRequest": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"filename":   map[string]any{"type": "string"},
+				"namePrefix": map[string]any{"type": "string"},
+				"content":    map[string]any{"type": "string"},
+			},
+			"required": []string{"content"},
+		},
+			"DAEConfigFileImportResponse": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"imported": map[string]any{"type": "boolean"},
+					"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+			},
+			"DAEConfigFilePreviewResponse": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"bundle":   schemaRef("DAEBundle"),
+					"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+			},
+			"DAEBundleDefaults": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"configId":  map[string]any{"type": "integer"},
+				"dnsId":     map[string]any{"type": "integer"},
+				"routingId": map[string]any{"type": "integer"},
+				"groupId":   map[string]any{"type": "integer"},
+			},
+		},
+		"DAEBundleSelected": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"configId":  map[string]any{"type": "integer"},
+				"dnsId":     map[string]any{"type": "integer"},
+				"routingId": map[string]any{"type": "integer"},
+			},
+		},
+		"DAEBundleConfig": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":     map[string]any{"type": "integer"},
+				"name":   map[string]any{"type": "string"},
+				"global": map[string]any{"type": "string"},
+			},
+		},
+		"DAEBundleDNS": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":   map[string]any{"type": "integer"},
+				"name": map[string]any{"type": "string"},
+				"dns":  map[string]any{"type": "string"},
+			},
+		},
+		"DAEBundleRouting": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":      map[string]any{"type": "integer"},
+				"name":    map[string]any{"type": "string"},
+				"routing": map[string]any{"type": "string"},
+			},
+		},
+		"DAEBundleSubscription": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":         map[string]any{"type": "integer"},
+				"updatedAt":  map[string]any{"type": "string", "format": "date-time"},
+				"link":       map[string]any{"type": "string"},
+				"cronExp":    map[string]any{"type": "string"},
+				"cronEnable": map[string]any{"type": "boolean"},
+				"status":     map[string]any{"type": "string"},
+				"info":       map[string]any{"type": "string"},
+				"tag":        map[string]any{"type": "string"},
+			},
+		},
+		"DAEBundleNode": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":             map[string]any{"type": "integer"},
+				"link":           map[string]any{"type": "string"},
+				"name":           map[string]any{"type": "string"},
+				"address":        map[string]any{"type": "string"},
+				"protocol":       map[string]any{"type": "string"},
+				"tag":            map[string]any{"type": "string"},
+				"subscriptionId": map[string]any{"type": "integer"},
+			},
+		},
+		"DAEBundleGroupSubscription": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"subscriptionId":  map[string]any{"type": "integer"},
+				"nameFilterRegex": map[string]any{"type": "string"},
+			},
+		},
+		"DAEBundleGroup": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":                   map[string]any{"type": "integer"},
+				"name":                 map[string]any{"type": "string"},
+				"policy":               map[string]any{"type": "string"},
+				"policyParams":         map[string]any{"type": "array", "items": schemaRef("ParamResource")},
+				"nodeIds":              map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
+				"subscriptionBindings": map[string]any{"type": "array", "items": schemaRef("DAEBundleGroupSubscription")},
+			},
+		},
+		"DAEBundle": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"schemaVersion": map[string]any{"type": "integer"},
+				"exportedAt":    map[string]any{"type": "string", "format": "date-time"},
+				"mode":          map[string]any{"type": "string"},
+				"defaults":      schemaRef("DAEBundleDefaults"),
+				"selected":      schemaRef("DAEBundleSelected"),
+				"configs":       map[string]any{"type": "array", "items": schemaRef("DAEBundleConfig")},
+				"dnss":          map[string]any{"type": "array", "items": schemaRef("DAEBundleDNS")},
+				"routings":      map[string]any{"type": "array", "items": schemaRef("DAEBundleRouting")},
+				"subscriptions": map[string]any{"type": "array", "items": schemaRef("DAEBundleSubscription")},
+				"nodes":         map[string]any{"type": "array", "items": schemaRef("DAEBundleNode")},
+				"groups":        map[string]any{"type": "array", "items": schemaRef("DAEBundleGroup")},
+			},
+		},
 		"ConfigCreateRequest":  configMutationSchema(),
 		"ConfigUpdateRequest":  configMutationSchema(),
 		"DNSCreateRequest":     resourceMutationSchema("dns"),
@@ -671,6 +859,26 @@ func resourceCollectionPath(collectionName string, singularName string, resource
 			},
 			"responses": map[string]any{
 				"201": jsonResponse("Resource created.", resourceSchemaName),
+			},
+		},
+	}
+}
+
+func configPreviewPath() map[string]any {
+	return map[string]any{
+		"post": map[string]any{
+			"summary":     "Preview config global section",
+			"description": "Parses raw `global` DSL or marshals `parsedGlobal` input and returns both normalized raw text and structured fields.",
+			"requestBody": map[string]any{
+				"required": false,
+				"content": map[string]any{
+					"application/json": map[string]any{
+						"schema": schemaRef("ConfigCreateRequest"),
+					},
+				},
+			},
+			"responses": map[string]any{
+				"200": jsonResponse("Config global preview.", "ParsedConfigResponse"),
 			},
 		},
 	}
@@ -747,6 +955,7 @@ func configResourceSchema() map[string]any {
 			"name":         map[string]any{"type": "string"},
 			"global":       map[string]any{"type": "string"},
 			"parsedGlobal": parsedGlobalSchema(),
+			"parseError":   map[string]any{"type": "string"},
 			"selected":     map[string]any{"type": "boolean"},
 			"version":      map[string]any{"type": "integer"},
 		},

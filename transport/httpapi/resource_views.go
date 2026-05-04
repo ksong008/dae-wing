@@ -16,22 +16,23 @@ import (
 )
 
 func buildConfigResource(model *db.Config) (configResource, error) {
+	resource := buildConfigResourceRaw(model)
 	conf, err := engine.Default().ParseConfig(&model.Global, nil, nil)
 	if err != nil {
-		return configResource{}, err
+		resource.ParseError = err.Error()
+		return resource, nil
 	}
-	resource := buildConfigResourceRaw(model)
 	resource.ParsedGlobal = globalResourceFromModel(&conf.Global)
 	return resource, nil
 }
 
 func buildConfigResourceRaw(model *db.Config) configResource {
 	return configResource{
-		ID:           model.ID,
-		Name:         model.Name,
-		Global:       model.Global,
-		Selected:     model.Selected,
-		Version:      model.Version,
+		ID:       model.ID,
+		Name:     model.Name,
+		Global:   model.Global,
+		Selected: model.Selected,
+		Version:  model.Version,
 	}
 }
 
@@ -49,11 +50,11 @@ func buildDNSResource(model *db.Dns) (dnsResource, error) {
 
 func buildDNSResourceRaw(model *db.Dns) dnsResource {
 	return dnsResource{
-		ID:        model.ID,
-		Name:      model.Name,
-		DNS:       model.Dns,
-		Selected:  model.Selected,
-		Version:   model.Version,
+		ID:       model.ID,
+		Name:     model.Name,
+		DNS:      model.Dns,
+		Selected: model.Selected,
+		Version:  model.Version,
 	}
 }
 
@@ -72,11 +73,11 @@ func buildRoutingResource(model *db.Routing) (routingResource, error) {
 
 func buildRoutingResourceRaw(model *db.Routing) routingResource {
 	return routingResource{
-		ID:              model.ID,
-		Name:            model.Name,
-		Routing:         model.Routing,
-		Selected:        model.Selected,
-		Version:         model.Version,
+		ID:       model.ID,
+		Name:     model.Name,
+		Routing:  model.Routing,
+		Selected: model.Selected,
+		Version:  model.Version,
 	}
 }
 

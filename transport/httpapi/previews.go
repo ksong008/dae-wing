@@ -19,6 +19,11 @@ type parsedSectionRequest struct {
 	Raw string `json:"raw"`
 }
 
+type parsedConfigResponse struct {
+	Global       string         `json:"global"`
+	ParsedGlobal map[string]any `json:"parsedGlobal,omitempty"`
+}
+
 type parsedDNSResponse struct {
 	String   string                   `json:"string"`
 	Upstream []parsedParamResponse    `json:"upstream"`
@@ -77,6 +82,32 @@ func handleParsedDNS(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, parsedDNSResponseFromModel(&conf.Dns, req.Raw))
+}
+
+func handleParsedConfig(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(rw, http.MethodPost)
+		return
+	}
+	var req configMutationRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
+	globalSection, err := buildConfigGlobalSectionForCreate(req.Global, req.ParsedGlobal)
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
+	conf, err := engine.Default().ParseConfig(&globalSection, nil, nil)
+	if err != nil {
+		writeError(rw, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(rw, http.StatusOK, parsedConfigResponse{
+		Global:       globalSection,
+		ParsedGlobal: globalResourceFromModel(&conf.Global),
+	})
 }
 
 func handleParsedRouting(rw http.ResponseWriter, r *http.Request) {
