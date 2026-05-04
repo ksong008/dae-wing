@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -408,6 +410,11 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 		_, _ = rw.Write([]byte("c3M6Ly8yMDIyLWJsYWtlMy1hZXMtMTI4LWdjbTpNVEl6TkRVMk56ZzVNREV5TXpRMU5nPT1AZXhhbXBsZS5jb206NDQzI3N1Yi1ub2RlCg=="))
 	}))
 	defer subServer.Close()
+	subServer2 := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		payload := base64.StdEncoding.EncodeToString([]byte("ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@unused.example.com:443#unused-sub-node\n"))
+		_, _ = rw.Write([]byte(payload))
+	}))
+	defer subServer2.Close()
 
 	cfg := db.Config{Name: "active", Global: "global {\n  log_level: info\n}", Selected: true}
 	dns := db.Dns{Name: "active_dns", Dns: "dns {\n  upstream {\n    googledns: 'udp://1.1.1.1:53'\n  }\n  routing {\n    request {\n      fallback: googledns\n    }\n  }\n}", Selected: true}
@@ -435,6 +442,19 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	if err := db.DB(context.Background()).Create(&subscription).Error; err != nil {
 		t.Fatalf("seed subscription: %v", err)
 	}
+	unusedSubTag := "subb"
+	unusedSubscription := db.Subscription{
+		UpdatedAt:  time.Now(),
+		Link:       subServer2.URL,
+		CronExp:    "10 */6 * * *",
+		CronEnable: true,
+		Status:     "ok",
+		Info:       "unused",
+		Tag:        &unusedSubTag,
+	}
+	if err := db.DB(context.Background()).Create(&unusedSubscription).Error; err != nil {
+		t.Fatalf("seed unused subscription: %v", err)
+	}
 	subNode := db.Node{
 		Link:           "ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@example.com:443#sub-node",
 		Name:           "sub-node",
@@ -453,8 +473,29 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	if err := db.DB(context.Background()).Create(&subNode).Error; err != nil {
 		t.Fatalf("seed subscription node: %v", err)
 	}
+	unusedSubNode := db.Node{
+		Link:           "ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@unused.example.com:443#unused-sub-node",
+		Name:           "unused-sub-node",
+		Address:        "unused.example.com:443",
+		Protocol:       "shadowsocks",
+		SubscriptionID: &unusedSubscription.ID,
+	}
+	if err := db.DB(context.Background()).Create(&unusedSubNode).Error; err != nil {
+		t.Fatalf("seed unused subscription node: %v", err)
+	}
 	if err := db.DB(context.Background()).Create(&manualNode).Error; err != nil {
 		t.Fatalf("seed manual node: %v", err)
+	}
+	spareTag := "spare-node"
+	spareNode := db.Node{
+		Link:     "ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@spare.example:443#spare",
+		Name:     "spare",
+		Address:  "spare.example:443",
+		Protocol: "shadowsocks",
+		Tag:      &spareTag,
+	}
+	if err := db.DB(context.Background()).Create(&spareNode).Error; err != nil {
+		t.Fatalf("seed spare manual node: %v", err)
 	}
 
 	regex := "^sub-"
@@ -497,6 +538,12 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	}
 	if !strings.Contains(content, `name("manual-node")`) {
 		t.Fatalf("exported content missing manual node filter:\n%s", content)
+	}
+	if !strings.Contains(content, subServer2.URL) {
+		t.Fatalf("exported content missing unused subscription:\n%s", content)
+	}
+	if !strings.Contains(content, spareTag) {
+		t.Fatalf("exported content missing spare node tag:\n%s", content)
 	}
 
 	if err := db.DB(context.Background()).Create(&db.Config{Name: "extra", Global: "global {}", Selected: false}).Error; err != nil {
@@ -558,8 +605,30 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	if err := db.DB(context.Background()).Find(&subscriptions).Error; err != nil {
 		t.Fatalf("load subscriptions after import: %v", err)
 	}
-	if len(subscriptions) != 1 || subscriptions[0].Tag == nil || *subscriptions[0].Tag != "suba" {
+	subscriptionTags := make([]string, 0, len(subscriptions))
+	for _, item := range subscriptions {
+		if item.Tag != nil {
+			subscriptionTags = append(subscriptionTags, *item.Tag)
+		}
+	}
+	slices.Sort(subscriptionTags)
+	if len(subscriptions) != 2 || !slices.Equal(subscriptionTags, []string{"suba", "subb"}) {
 		t.Fatalf("subscriptions after import = %#v", subscriptions)
+	}
+
+	var nodes []db.Node
+	if err := db.DB(context.Background()).Find(&nodes).Error; err != nil {
+		t.Fatalf("load nodes after import: %v", err)
+	}
+	nodeTags := make([]string, 0, len(nodes))
+	for _, item := range nodes {
+		if item.Tag != nil {
+			nodeTags = append(nodeTags, *item.Tag)
+		}
+	}
+	slices.Sort(nodeTags)
+	if len(nodes) != 4 || !slices.Equal(nodeTags, []string{"manual-node", "spare-node"}) {
+		t.Fatalf("nodes after import = %#v", nodes)
 	}
 
 	groups, err := orchestrator.ListGroups(context.Background(), nil, nil)

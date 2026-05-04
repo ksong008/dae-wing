@@ -46,8 +46,8 @@ type daeConfigFileImportResponse struct {
 }
 
 type daeConfigFilePreviewResponse struct {
-	Bundle   daeBundle             `json:"bundle"`
-	Warnings []daeConfigFileIssue  `json:"warnings,omitempty"`
+	Bundle   daeBundle            `json:"bundle"`
+	Warnings []daeConfigFileIssue `json:"warnings,omitempty"`
 }
 
 type resolvedImportedDAEConfig struct {
@@ -205,12 +205,12 @@ func exportDAEConfigFile(ctx context.Context, _ *db.User) (*daeConfigFileRespons
 	tx := db.BeginReadOnlyTx(ctx)
 	defer tx.Commit()
 
-	selectedConfig, selectedDNS, selectedRouting, groups, err := loadSelectedRuntimeResources(tx)
+	selectedConfig, selectedDNS, selectedRouting, groups, subscriptions, independentNodes, err := loadSelectedRuntimeResources(tx)
 	if err != nil {
 		return nil, err
 	}
 
-	conf, warnings, err := buildNativeDAEConfig(selectedConfig, selectedDNS, selectedRouting, groups)
+	conf, warnings, err := buildNativeDAEConfig(selectedConfig, selectedDNS, selectedRouting, groups, subscriptions, independentNodes)
 	if err != nil {
 		return nil, err
 	}
@@ -295,49 +295,45 @@ func previewDAEConfigFile(ctx context.Context, user *db.User, req *daeConfigFile
 	}, nil
 }
 
-func loadSelectedRuntimeResources(d *gorm.DB) (*db.Config, *db.Dns, *db.Routing, []db.Group, error) {
+func loadSelectedRuntimeResources(d *gorm.DB) (*db.Config, *db.Dns, *db.Routing, []db.Group, []db.Subscription, []db.Node, error) {
 	var selectedConfig db.Config
 	if err := d.Model(&db.Config{}).Where("selected = ?", true).First(&selectedConfig).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, nil, nil, nil, fmt.Errorf("please select a config")
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("please select a config")
 		}
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	var selectedDNS db.Dns
 	if err := d.Model(&db.Dns{}).Where("selected = ?", true).First(&selectedDNS).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, nil, nil, nil, fmt.Errorf("please select a dns")
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("please select a dns")
 		}
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	var selectedRouting db.Routing
 	if err := d.Model(&db.Routing{}).Where("selected = ?", true).First(&selectedRouting).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, nil, nil, nil, fmt.Errorf("please select a routing")
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("please select a routing")
 		}
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	parsedConfig, err := engine.Default().ParseConfig(&selectedConfig.Global, &selectedDNS.Dns, &selectedRouting.Routing)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	groupNames := engine.Default().NecessaryOutbounds(&parsedConfig.Routing)
 	groupNames = filterReferencedGroupNames(groupNames)
-	if len(groupNames) == 0 {
-		return &selectedConfig, &selectedDNS, &selectedRouting, nil, nil
-	}
 
 	var groups []db.Group
 	if err := d.Model(&db.Group{}).
-		Where("name in ?", groupNames).
 		Preload("Node").
 		Preload("PolicyParams").
 		Preload("SubscriptionBindings").
 		Preload("SubscriptionBindings.Subscription").
 		Preload("SubscriptionBindings.Subscription.Node").
 		Find(&groups).Error; err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	missing := map[string]struct{}{}
@@ -353,9 +349,20 @@ func loadSelectedRuntimeResources(d *gorm.DB) (*db.Config, *db.Dns, *db.Routing,
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		return nil, nil, nil, nil, fmt.Errorf("groups not defined but referenced by routing: %s", strings.Join(names, ", "))
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("groups not defined but referenced by routing: %s", strings.Join(names, ", "))
 	}
-	return &selectedConfig, &selectedDNS, &selectedRouting, groups, nil
+
+	var subscriptions []db.Subscription
+	if err := d.Model(&db.Subscription{}).Preload("Node").Find(&subscriptions).Error; err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	var independentNodes []db.Node
+	if err := d.Model(&db.Node{}).Where("subscription_id IS NULL").Find(&independentNodes).Error; err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	return &selectedConfig, &selectedDNS, &selectedRouting, groups, subscriptions, independentNodes, nil
 }
 
 func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedImportedDAEConfig, error) {
@@ -496,13 +503,13 @@ func resolveImportedDAEConfig(resources *importedDAEConfigResources) (*resolvedI
 	return resolved, nil
 }
 
-func buildNativeDAEConfig(selectedConfig *db.Config, selectedDNS *db.Dns, selectedRouting *db.Routing, groups []db.Group) (*daeConfig.Config, []daeConfigFileIssue, error) {
+func buildNativeDAEConfig(selectedConfig *db.Config, selectedDNS *db.Dns, selectedRouting *db.Routing, groups []db.Group, subscriptions []db.Subscription, independentNodes []db.Node) (*daeConfig.Config, []daeConfigFileIssue, error) {
 	conf, err := engine.Default().ParseConfig(&selectedConfig.Global, &selectedDNS.Dns, &selectedRouting.Routing)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	exportState := newNativeExportState(groups)
+	exportState := newNativeExportState(groups, subscriptions, independentNodes)
 	warnings := exportState.populate(conf)
 	return conf, warnings, nil
 }
@@ -607,14 +614,18 @@ func daeBundleFromResolvedImportedDAEConfig(mode string, resolved *resolvedImpor
 }
 
 type nativeExportState struct {
-	groups []db.Group
-	used   map[string]struct{}
+	groups           []db.Group
+	subscriptions    []db.Subscription
+	independentNodes []db.Node
+	used             map[string]struct{}
 }
 
-func newNativeExportState(groups []db.Group) *nativeExportState {
+func newNativeExportState(groups []db.Group, subscriptions []db.Subscription, independentNodes []db.Node) *nativeExportState {
 	return &nativeExportState{
-		groups: groups,
-		used:   make(map[string]struct{}),
+		groups:           groups,
+		subscriptions:    subscriptions,
+		independentNodes: independentNodes,
+		used:             make(map[string]struct{}),
 	}
 }
 
@@ -629,6 +640,14 @@ func (s *nativeExportState) populate(conf *daeConfig.Config) []daeConfigFileIssu
 
 	seenSubscriptions := map[uint]*db.Subscription{}
 	seenIndependentNodes := map[uint]*db.Node{}
+	for i := range s.subscriptions {
+		subscription := s.subscriptions[i]
+		seenSubscriptions[subscription.ID] = &subscription
+	}
+	for i := range s.independentNodes {
+		node := s.independentNodes[i]
+		seenIndependentNodes[node.ID] = &node
+	}
 	for i := range s.groups {
 		for _, binding := range s.groups[i].SubscriptionBindings {
 			sub := binding.Subscription
@@ -700,11 +719,11 @@ func (s *nativeExportState) populate(conf *daeConfig.Config) []daeConfigFileIssu
 				}
 				continue
 			}
-				warnings = append(warnings, daeConfigFileIssue{
-					Level:   daeConfigIssueLossy,
-					Code:    "group_subscription_node_flattened_on_export",
-					Message: fmt.Sprintf("group %q contains subscription-backed manual node %q; exported as name filter against node name", group.Name, node.Name),
-				})
+			warnings = append(warnings, daeConfigFileIssue{
+				Level:   daeConfigIssueLossy,
+				Code:    "group_subscription_node_flattened_on_export",
+				Message: fmt.Sprintf("group %q contains subscription-backed manual node %q; exported as name filter against node name", group.Name, node.Name),
+			})
 			appendFilter([]*config_parser.Function{{
 				Name: "name",
 				Params: []*config_parser.Param{
@@ -917,11 +936,11 @@ func parseImportedDAEConfig(req *daeConfigFileImportRequest) (*importedDAEConfig
 		}
 		if len(group.Filter) == 0 {
 			imported.NodeRefs = append(imported.NodeRefs, importedNodeRef{SubscriptionTag: "*", Key: "*"})
-				resources.Warnings = append(resources.Warnings, daeConfigFileIssue{
-					Level:   daeConfigIssueLossy,
-					Code:    "group_empty_filter_flattened",
-					Message: fmt.Sprintf("group %q has no filter; import will flatten it to all currently imported nodes", group.Name),
-				})
+			resources.Warnings = append(resources.Warnings, daeConfigFileIssue{
+				Level:   daeConfigIssueLossy,
+				Code:    "group_empty_filter_flattened",
+				Message: fmt.Sprintf("group %q has no filter; import will flatten it to all currently imported nodes", group.Name),
+			})
 			resources.Groups = append(resources.Groups, imported)
 			continue
 		}
@@ -943,11 +962,11 @@ func parseImportedDAEConfig(req *daeConfigFileImportRequest) (*importedDAEConfig
 			}
 
 			imported.NodeRefs = append(imported.NodeRefs, importedNodeRef{SubscriptionTag: "*", Key: renderImportedFilter(alternative)})
-				resources.Warnings = append(resources.Warnings, daeConfigFileIssue{
-					Level:   daeConfigIssueLossy,
-					Code:    "group_filter_flattened",
-					Message: fmt.Sprintf("group %q uses filter %q which cannot be represented natively in daed; it will be flattened to explicit node membership during import", group.Name, renderImportedFilter(alternative)),
-				})
+			resources.Warnings = append(resources.Warnings, daeConfigFileIssue{
+				Level:   daeConfigIssueLossy,
+				Code:    "group_filter_flattened",
+				Message: fmt.Sprintf("group %q uses filter %q which cannot be represented natively in daed; it will be flattened to explicit node membership during import", group.Name, renderImportedFilter(alternative)),
+			})
 		}
 		resources.Groups = append(resources.Groups, imported)
 	}
