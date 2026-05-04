@@ -549,6 +549,9 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	if !strings.Contains(content, `subtag("suba")`) {
 		t.Fatalf("exported content missing subtag binding:\n%s", content)
 	}
+	if !strings.Contains(content, `subtag("suba") && name("sub-node")`) {
+		t.Fatalf("exported content missing normalized exact subscription-node filter:\n%s", content)
+	}
 	if !strings.Contains(content, `name("manual-node")`) {
 		t.Fatalf("exported content missing manual node filter:\n%s", content)
 	}
@@ -557,6 +560,15 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	}
 	if !strings.Contains(content, spareTag) {
 		t.Fatalf("exported content missing spare node tag:\n%s", content)
+	}
+	if !strings.Contains(content, "\n\nsubscription {") || !strings.Contains(content, "\n\ngroup {") {
+		t.Fatalf("exported content missing normalized top-level spacing:\n%s", content)
+	}
+	if !strings.Contains(content, `suba: "`) || !strings.Contains(content, `manual-node: "`) {
+		t.Fatalf("exported content missing normalized colon spacing:\n%s", content)
+	}
+	if !strings.Contains(content, "\n    suba: ") || !strings.Contains(content, "\n    subnode {") {
+		t.Fatalf("exported content missing example-style 4-space indentation:\n%s", content)
 	}
 
 	if err := db.DB(context.Background()).Create(&db.Config{Name: "extra", Global: "global {}", Selected: false}).Error; err != nil {

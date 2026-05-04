@@ -215,10 +215,11 @@ func exportDAEConfigFile(ctx context.Context, _ *db.User) (*daeConfigFileRespons
 		return nil, err
 	}
 
-	contentBytes, err := conf.Marshal(2)
+	contentBytes, err := conf.Marshal(4)
 	if err != nil {
 		return nil, err
 	}
+	content := normalizeExportedDAEConfig(string(contentBytes))
 
 	filenameBase := selectedConfig.Name
 	if filenameBase == "" {
@@ -227,7 +228,7 @@ func exportDAEConfigFile(ctx context.Context, _ *db.User) (*daeConfigFileRespons
 	filenameBase = sanitizeExportFileStem(filenameBase)
 	return &daeConfigFileResponse{
 		Filename: filenameBase + ".dae",
-		Content:  string(contentBytes),
+		Content:  content,
 		Warnings: warnings,
 	}, nil
 }
@@ -863,6 +864,87 @@ func sanitizeExportFileStem(raw string) string {
 		return "dae"
 	}
 	return stem
+}
+
+func normalizeExportedDAEConfig(raw string) string {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+	normalized := make([]string, 0, len(lines)+8)
+	firstTopLevel := true
+	for _, line := range lines {
+		line = normalizeExportedDAELine(strings.TrimRight(line, " \t"))
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if isTopLevelDAESectionLine(line) {
+			if !firstTopLevel && len(normalized) > 0 && normalized[len(normalized)-1] != "" {
+				normalized = append(normalized, "")
+			}
+			firstTopLevel = false
+		}
+		normalized = append(normalized, line)
+	}
+	return strings.Join(normalized, "\n") + "\n"
+}
+
+func isTopLevelDAESectionLine(line string) bool {
+	return line != "" && line[0] != ' ' && strings.HasSuffix(line, " {")
+}
+
+func normalizeExportedDAELine(line string) string {
+	if line == "" {
+		return ""
+	}
+
+	var builder strings.Builder
+	var inSingle bool
+	var inDouble bool
+	var escaped bool
+	colonNormalized := false
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+
+		if !escaped {
+			switch {
+			case ch == '\'' && !inDouble:
+				inSingle = !inSingle
+			case ch == '"' && !inSingle:
+				inDouble = !inDouble
+			}
+		}
+
+		if !inSingle && !inDouble {
+			if !colonNormalized && ch == ':' {
+				builder.WriteByte(ch)
+				colonNormalized = true
+				if i+1 < len(line) && line[i+1] != ' ' && line[i+1] != '\t' {
+					builder.WriteByte(' ')
+				}
+				escaped = false
+				continue
+			}
+			if ch == '&' && i+1 < len(line) && line[i+1] == '&' {
+				text := builder.String()
+				builder.Reset()
+				builder.WriteString(strings.TrimRight(text, " \t"))
+				builder.WriteString(" && ")
+				i++
+				for i+1 < len(line) && (line[i+1] == ' ' || line[i+1] == '\t') {
+					i++
+				}
+				escaped = false
+				continue
+			}
+		}
+
+		builder.WriteByte(ch)
+		escaped = ch == '\\' && !escaped
+		if ch != '\\' {
+			escaped = false
+		}
+	}
+
+	return builder.String()
 }
 
 func resolvedNodeKey(subscriptionTag string, rawDialerLink string) string {
