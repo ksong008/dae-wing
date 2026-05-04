@@ -215,7 +215,7 @@ func exportDAEConfigFile(ctx context.Context, _ *db.User) (*daeConfigFileRespons
 		return nil, err
 	}
 
-	contentBytes, err := conf.Marshal(4)
+	contentBytes, err := marshalExportedDAEConfig(conf)
 	if err != nil {
 		return nil, err
 	}
@@ -884,6 +884,30 @@ func normalizeExportedDAEConfig(raw string) string {
 		normalized = append(normalized, line)
 	}
 	return strings.Join(normalized, "\n") + "\n"
+}
+
+func marshalExportedDAEConfig(conf *daeConfig.Config) ([]byte, error) {
+	if conf == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	m := daeConfig.Marshaller{IndentSpace: 4}
+	sections := []struct {
+		name  string
+		value any
+	}{
+		{name: "global", value: conf.Global},
+		{name: "subscription", value: conf.Subscription},
+		{name: "node", value: conf.Node},
+		{name: "dns", value: conf.Dns},
+		{name: "group", value: conf.Group},
+		{name: "routing", value: conf.Routing},
+	}
+	for _, section := range sections {
+		if err := m.MarshalSection(section.name, reflect.ValueOf(section.value), 0); err != nil {
+			return nil, err
+		}
+	}
+	return m.Bytes(), nil
 }
 
 func isTopLevelDAESectionLine(line string) bool {

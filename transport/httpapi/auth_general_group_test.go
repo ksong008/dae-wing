@@ -570,6 +570,12 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	if !strings.Contains(content, "\n    suba: ") || !strings.Contains(content, "\n    subnode {") {
 		t.Fatalf("exported content missing example-style 4-space indentation:\n%s", content)
 	}
+	dnsIndex := strings.Index(content, "\ndns {")
+	groupIndex := strings.Index(content, "\ngroup {")
+	routingIndex := strings.Index(content, "\nrouting {")
+	if dnsIndex < 0 || groupIndex < 0 || routingIndex < 0 || !(dnsIndex < groupIndex && groupIndex < routingIndex) {
+		t.Fatalf("exported content missing example-style section order:\n%s", content)
+	}
 
 	if err := db.DB(context.Background()).Create(&db.Config{Name: "extra", Global: "global {}", Selected: false}).Error; err != nil {
 		t.Fatalf("seed extra config: %v", err)
