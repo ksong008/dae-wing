@@ -298,6 +298,63 @@ func TestConfigStructuredGlobalInputHandlers(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsInvalidFallbackResolver(t *testing.T) {
+	if err := db.InitDatabase(t.TempDir()); err != nil {
+		t.Fatalf("init database: %v", err)
+	}
+	handler := NewHandler()
+
+	valid := performJSONRequest(t, handler, http.MethodPost, "/configs", `{"name":"cfg-valid","parsedGlobal":{"fallbackResolver":"8.8.8.8:53"}}`)
+	if valid.Code != http.StatusCreated {
+		t.Fatalf("valid create status = %d, body = %s", valid.Code, valid.Body.String())
+	}
+	validID := int(decodeBody(t, valid)["id"].(float64))
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "create parsedGlobal",
+			method: http.MethodPost,
+			path:   "/configs",
+			body:   `{"name":"cfg-bad","parsedGlobal":{"fallbackResolver":"bad-resolver"}}`,
+		},
+		{
+			name:   "create raw global",
+			method: http.MethodPost,
+			path:   "/configs",
+			body:   `{"name":"cfg-bad-raw","global":"global {\n  fallback_resolver: bad-resolver\n}"}`,
+		},
+		{
+			name:   "update parsedGlobal",
+			method: http.MethodPut,
+			path:   fmt.Sprintf("/configs/%d", validID),
+			body:   `{"parsedGlobal":{"fallbackResolver":"bad-resolver"}}`,
+		},
+		{
+			name:   "preview parsedGlobal",
+			method: http.MethodPost,
+			path:   "/configs/parsed",
+			body:   `{"parsedGlobal":{"fallbackResolver":"bad-resolver"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := performJSONRequest(t, handler, tt.method, tt.path, tt.body)
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", resp.Code, resp.Body.String())
+			}
+			if !strings.Contains(resp.Body.String(), "fallback_resolver") {
+				t.Fatalf("error body = %s, want fallback_resolver", resp.Body.String())
+			}
+		})
+	}
+}
+
 func TestConfigExpandParsedToleratesBrokenStoredGlobal(t *testing.T) {
 	if err := db.InitDatabase(t.TempDir()); err != nil {
 		t.Fatalf("init database: %v", err)
