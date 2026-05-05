@@ -84,6 +84,36 @@ func TestRuntimeOperationTimeout(t *testing.T) {
 	})
 }
 
+func TestDisableResponseWriteDeadlineClearsDeadline(t *testing.T) {
+	rec := &writeDeadlineRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		deadline:         time.Now(),
+	}
+
+	disableResponseWriteDeadline(rec)
+
+	if !rec.called {
+		t.Fatal("SetWriteDeadline was not called")
+	}
+	if !rec.deadline.IsZero() {
+		t.Fatalf("deadline = %v, want zero time", rec.deadline)
+	}
+
+	disableResponseWriteDeadline(httptest.NewRecorder())
+}
+
+type writeDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	called   bool
+	deadline time.Time
+}
+
+func (r *writeDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
+	r.called = true
+	r.deadline = deadline
+	return nil
+}
+
 func TestRuntimeEventsOpenAPIIncludesOverviewQueryParameters(t *testing.T) {
 	doc := OpenAPIDocument()
 	paths, ok := doc["paths"].(map[string]any)

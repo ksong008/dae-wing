@@ -14,13 +14,7 @@ import (
 
 func SelectConfig(ctx context.Context, id uint) (n int32, err error) {
 	tx := db.BeginTx(ctx)
-	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
-		}
-	}()
+	defer finishTx(tx, &err)
 	q := tx.Model(&db.Config{}).Where("selected = ?", true).Update("selected", false)
 	if err = q.Error; err != nil {
 		return 0, err
@@ -37,13 +31,7 @@ func SelectConfig(ctx context.Context, id uint) (n int32, err error) {
 
 func SelectDNS(ctx context.Context, id uint) (n int32, err error) {
 	tx := db.BeginTx(ctx)
-	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
-		}
-	}()
+	defer finishTx(tx, &err)
 	q := tx.Model(&db.Dns{}).Where("selected = ?", true).Update("selected", false)
 	if err = q.Error; err != nil {
 		return 0, err
@@ -60,13 +48,7 @@ func SelectDNS(ctx context.Context, id uint) (n int32, err error) {
 
 func SelectRouting(ctx context.Context, id uint) (n int32, err error) {
 	tx := db.BeginTx(ctx)
-	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
-		}
-	}()
+	defer finishTx(tx, &err)
 	q := tx.Model(&db.Routing{}).Where("selected = ?", true).Update("selected", false)
 	if err = q.Error; err != nil {
 		return 0, err

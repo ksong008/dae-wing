@@ -29,14 +29,29 @@ type node struct {
 	uniqueName string
 }
 
-var runLock sync.Mutex
+var (
+	runtimeLifecycleMu            sync.Mutex
+	errRuntimeOperationInProgress = errors.New("the last request didn't complete; make a cup of tea and take a break")
+)
 
 func Run(ctx context.Context, dry bool) (n int32, err error) {
-	if ok := runLock.TryLock(); !ok {
-		return 0, fmt.Errorf("the last request didn't complete; make a cup of tea and take a break")
+	unlock, ok := lockRuntimeLifecycle()
+	if !ok {
+		return 0, errRuntimeOperationInProgress
 	}
-	defer runLock.Unlock()
+	defer unlock()
 
+	return run(ctx, dry)
+}
+
+func lockRuntimeLifecycle() (func(), bool) {
+	if ok := runtimeLifecycleMu.TryLock(); !ok {
+		return nil, false
+	}
+	return runtimeLifecycleMu.Unlock, true
+}
+
+func run(ctx context.Context, dry bool) (n int32, err error) {
 	tx := db.BeginTx(ctx)
 	committed := false
 	defer func() {
@@ -272,17 +287,29 @@ func Run(ctx context.Context, dry bool) (n int32, err error) {
 }
 
 func RestoreRunningState(ctx context.Context) (err error) {
+	unlock, ok := lockRuntimeLifecycle()
+	if !ok {
+		return errRuntimeOperationInProgress
+	}
+	defer unlock()
+
 	reload, err := shouldRestoreRunningState(ctx)
 	if err != nil || !reload {
 		return err
 	}
-	if _, err = Run(ctx, false); err != nil {
+	if _, err = run(ctx, false); err != nil {
 		return markStoppedAfterRestoreFailure(context.WithoutCancel(ctx), err)
 	}
 	return nil
 }
 
 func Stop(ctx context.Context, timeout time.Duration) (err error) {
+	unlock, ok := lockRuntimeLifecycle()
+	if !ok {
+		return errRuntimeOperationInProgress
+	}
+	defer unlock()
+
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}

@@ -94,10 +94,16 @@ func runtimeRunning(ctx context.Context) (bool, error) {
 	return model.Running, nil
 }
 
-func runtimeModified(ctx context.Context) (bool, error) {
+func runtimeModified(ctx context.Context) (modified bool, err error) {
 	var model db.System
 	tx := db.BeginReadOnlyTx(ctx)
-	defer tx.Commit()
+	defer func() {
+		if err == nil {
+			err = tx.Commit().Error
+		} else {
+			tx.Rollback()
+		}
+	}()
 
 	q := tx.Model(&model).Preload("RunningGroups").FirstOrCreate(&model)
 	if q.Error != nil {

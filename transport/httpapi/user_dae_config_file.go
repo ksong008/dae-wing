@@ -201,9 +201,15 @@ func handleCurrentUserDAEConfigFilePreview(rw http.ResponseWriter, r *http.Reque
 	writeJSON(rw, http.StatusOK, resp)
 }
 
-func exportDAEConfigFile(ctx context.Context, _ *db.User) (*daeConfigFileResponse, error) {
+func exportDAEConfigFile(ctx context.Context, _ *db.User) (resp *daeConfigFileResponse, err error) {
 	tx := db.BeginReadOnlyTx(ctx)
-	defer tx.Commit()
+	defer func() {
+		if err == nil {
+			err = tx.Commit().Error
+		} else {
+			tx.Rollback()
+		}
+	}()
 
 	selectedConfig, selectedDNS, selectedRouting, groups, subscriptions, independentNodes, err := loadSelectedRuntimeResources(tx)
 	if err != nil {

@@ -52,13 +52,7 @@ func ImportNodes(d *gorm.DB, abortError bool, subscriptionID *uint, args []Impor
 
 func UpdateNode(ctx context.Context, id uint, link *string, tag *string) (node *db.Node, err error) {
 	tx := db.BeginTx(ctx)
-	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
-		}
-	}()
+	defer finishTx(tx, &err)
 
 	var current db.Node
 	if err = tx.First(&current, id).Error; err != nil {
@@ -108,13 +102,7 @@ func DeleteNodes(ctx context.Context, ids []uint) (count int32, err error) {
 	}
 
 	tx := db.BeginTx(ctx)
-	defer func() {
-		if err == nil {
-			tx.Commit()
-		} else {
-			tx.Rollback()
-		}
-	}()
+	defer finishTx(tx, &err)
 
 	if err = autoUpdateGroupVersionsByNodeIDs(tx, ids); err != nil {
 		return 0, err

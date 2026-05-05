@@ -228,6 +228,7 @@ func handleRuntimeEvents(rw http.ResponseWriter, r *http.Request) {
 		writeError(rw, http.StatusInternalServerError, "streaming is not supported by this response writer")
 		return
 	}
+	disableResponseWriteDeadline(rw)
 
 	rw.Header().Set("Content-Type", "text/event-stream")
 	rw.Header().Set("Cache-Control", "no-cache")
@@ -457,4 +458,8 @@ func writeSSE(rw http.ResponseWriter, flusher http.Flusher, event string, payloa
 	}
 	flusher.Flush()
 	return true
+}
+
+func disableResponseWriteDeadline(rw http.ResponseWriter) {
+	_ = http.NewResponseController(rw).SetWriteDeadline(time.Time{})
 }
