@@ -1,0 +1,64 @@
+name: daewingrust
+
+on:
+  push:
+    branches:
+      - daewingrust
+  pull_request:
+    branches:
+      - daewingrust
+  workflow_dispatch:
+
+permissions: read-all
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: daewingrust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upstream-gate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout dae-wing
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          path: dae-wing
+
+      - name: Checkout dae
+        uses: actions/checkout@v5
+        with:
+          repository: ksong008/dae
+          ref: daerust
+          fetch-depth: 0
+          submodules: recursive
+          path: dae
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache-dependency-path: |
+            dae-wing/go.mod
+            dae-wing/go.sum
+            dae/go.mod
+            dae/go.sum
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang-15 llvm-15
+
+      - name: Run daewingrust gate
+        working-directory: dae-wing
+        env:
+          GOFLAGS: -mod=mod -modcacherw
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: make rust-upstream-gate-local

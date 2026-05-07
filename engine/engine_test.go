@@ -57,11 +57,11 @@ func TestNativeServiceReloadContextCanceledBeforeStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := svc.ReloadContext(ctx, svc.EmptyConfig())
+	err := svc.ReloadWithContext(ctx, svc.EmptyConfig())
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("ReloadContext() error = %v, want context canceled", err)
+		t.Fatalf("ReloadWithContext() error = %v, want context canceled", err)
 	}
-	if _, running := svc.currentRuntime(); running {
+	if _, running := svc.CurrentRuntime(); running {
 		t.Fatal("runtime should not start after canceled reload context")
 	}
 }
@@ -76,7 +76,7 @@ func waitNativeServiceRunning(t *testing.T, svc *nativeService) {
 		case <-deadline:
 			t.Fatal("timed out waiting for native service to run")
 		case <-ticker.C:
-			if _, running := svc.currentRuntime(); running {
+			if _, running := svc.CurrentRuntime(); running {
 				return
 			}
 		}

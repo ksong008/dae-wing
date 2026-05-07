@@ -148,10 +148,10 @@ func (s *blockingReloadService) Run(log *logrus.Logger, conf *daeConfig.Config, 
 }
 
 func (s *blockingReloadService) Reload(conf *daeConfig.Config) error {
-	return s.ReloadContext(context.Background(), conf)
+	return s.ReloadWithContext(context.Background(), conf)
 }
 
-func (s *blockingReloadService) ReloadContext(ctx context.Context, conf *daeConfig.Config) error {
+func (s *blockingReloadService) ReloadWithContext(ctx context.Context, conf *daeConfig.Config) error {
 	s.startOnce.Do(func() {
 		close(s.reloadStarted)
 	})
@@ -161,6 +161,10 @@ func (s *blockingReloadService) ReloadContext(ctx context.Context, conf *daeConf
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (s *blockingReloadService) ReloadContext(ctx context.Context, conf *daeConfig.Config) error {
+	return s.ReloadWithContext(ctx, conf)
 }
 
 func (s *blockingReloadService) Stop(timeout time.Duration) error {

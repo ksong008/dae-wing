@@ -79,7 +79,7 @@ func run(ctx context.Context, dry bool) (n int32, err error) {
 		}
 		committed = true
 
-		err = engine.Default().ReloadContext(ctx, engine.Default().EmptyConfig())
+		err = engine.Default().ReloadWithContext(ctx, engine.Default().EmptyConfig())
 		if err != nil {
 			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
 		}
@@ -276,7 +276,7 @@ func run(ctx context.Context, dry bool) (n int32, err error) {
 	}
 	committed = true
 
-	errReload := engine.Default().ReloadContext(ctx, c)
+	errReload := engine.Default().ReloadWithContext(ctx, c)
 	if errReload != nil {
 		clearRunningNodeIndex()
 		return 0, markStoppedAfterRestoreFailure(context.WithoutCancel(ctx), fmt.Errorf("failed to load new config: %w; see more in log", errReload))

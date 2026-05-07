@@ -27,7 +27,7 @@ BUILD_ARGS := -trimpath -ldflags=$(GO_LDFLAGS) $(BUILD_ARGS)
 #export GOMODCACHE=$(PWD)/go-mod
 
 all: dae-wing
-.PHONY: all
+.PHONY: all rust-upstream-gate-local
 
 deps: schema-resolver $(DAE_READY)
 .PHONY: deps
@@ -85,3 +85,8 @@ emoji-lint:
 transport-surface-lint:
 	./scripts/check_retired_transport_markers.sh
 .PHONY: transport-surface-lint
+
+rust-upstream-gate-local:
+	GOFLAGS='-mod=mod -modcacherw' GOPROXY=https://goproxy.cn,direct GOSUMDB=sum.golang.google.cn $(MAKE) deps
+	go test ./engine -run 'TestNativeService(DryRunLifecycle|ReloadContextCanceledBeforeStart)$$' -count=1
+	go test ./engine ./orchestrator ./transport/httpapi -run '^$$'

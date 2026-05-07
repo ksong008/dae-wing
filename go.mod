@@ -98,10 +98,8 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
-replace github.com/daeuniverse/dae => ./dae-core
+replace github.com/daeuniverse/dae => ../dae
 
 replace github.com/daeuniverse/outbound => github.com/ksong008/outbound v0.0.0-20260503111656-34ca7d09e020
 
 replace github.com/daeuniverse/quic-go => github.com/ksong008/quic-go v0.0.0-20260419080117-578539b67bcc
-
-// replace github.com/daeuniverse/dae => ../dae
