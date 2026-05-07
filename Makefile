@@ -87,6 +87,7 @@ transport-surface-lint:
 .PHONY: transport-surface-lint
 
 rust-upstream-gate-local:
+	PATH=/root/.local/go1.25.9/bin:$$PATH $(MAKE) -C ../dae ebpf
 	GOFLAGS='-mod=mod -modcacherw' GOPROXY=https://goproxy.cn,direct GOSUMDB=sum.golang.google.cn $(MAKE) deps
 	go test ./engine -run 'TestNativeService(DryRunLifecycle|ReloadContextCanceledBeforeStart)$$' -count=1
 	go test ./engine ./orchestrator ./transport/httpapi -run '^$$'

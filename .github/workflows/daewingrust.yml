@@ -55,6 +55,13 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y clang-15 llvm-15
 
+      - name: Prepare daerust eBPF artifacts
+        working-directory: dae
+        env:
+          CLANG: clang-15
+          STRIP: llvm-strip-15
+        run: make ebpf
+
       - name: Run daewingrust gate
         working-directory: dae-wing
         env:
