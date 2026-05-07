@@ -34,6 +34,7 @@ deps: schema-resolver $(DAE_READY)
 
 DAE_READY = dae-core/control/bpf_bpfeb.o
 DAE_EBPF_SRC = dae-core/control/kern/tproxy.c
+DAE_REPO_DIR ?= ../dae
 
 schema-resolver: $(DAE_READY)
 	@unset GOOS && \
@@ -87,7 +88,7 @@ transport-surface-lint:
 .PHONY: transport-surface-lint
 
 rust-upstream-gate-local:
-	PATH=/root/.local/go1.25.9/bin:$$PATH $(MAKE) -C ../dae ebpf
+	PATH=/root/.local/go1.25.9/bin:$$PATH $(MAKE) -C $(DAE_REPO_DIR) ebpf
 	GOFLAGS='-mod=mod -modcacherw' GOPROXY=https://goproxy.cn,direct GOSUMDB=sum.golang.google.cn $(MAKE) deps
 	go test ./engine -run 'TestNativeService(DryRunLifecycle|ReloadContextCanceledBeforeStart)$$' -count=1
 	go test ./engine ./orchestrator ./transport/httpapi -run '^$$'
