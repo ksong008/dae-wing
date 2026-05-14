@@ -288,6 +288,10 @@ func deriveNodeTransport(link string, protocol string) *string {
 	case strings.HasPrefix(link, "ss://"), strings.HasPrefix(link, "shadowsocks://"):
 		parsed, err := shadowsocks.ParseSSURL(link)
 		if err == nil {
+			if strings.HasPrefix(strings.ToLower(parsed.Cipher), "2022-blake3-") {
+				transport := "ss2022"
+				return &transport
+			}
 			if parsed.Plugin.Name == "v2ray-plugin" && parsed.Plugin.Opts.Obfs != "" {
 				transport := parsed.Plugin.Opts.Obfs
 				return &transport

@@ -102,6 +102,24 @@ func TestNodeManagementHandlers(t *testing.T) {
 		t.Fatalf("http node transport = %#v, want http", httpNodeBody["transport"])
 	}
 
+	ss2022Node := db.Node{
+		Link:     "ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@example.com:443#ss2022-node",
+		Name:     "SS2022 Node",
+		Address:  "example.com:443",
+		Protocol: "shadowsocks",
+	}
+	if err := db.DB(context.Background()).Create(&ss2022Node).Error; err != nil {
+		t.Fatalf("seed ss2022 node: %v", err)
+	}
+	ss2022NodeResp := performJSONRequest(t, handler, http.MethodGet, "/nodes/"+itoa(int(ss2022Node.ID)), "")
+	if ss2022NodeResp.Code != http.StatusOK {
+		t.Fatalf("get ss2022 node status = %d, body = %s", ss2022NodeResp.Code, ss2022NodeResp.Body.String())
+	}
+	ss2022NodeBody := decodeBody(t, ss2022NodeResp)
+	if got, ok := ss2022NodeBody["transport"].(string); !ok || got != "ss2022" {
+		t.Fatalf("ss2022 node transport = %#v, want ss2022", ss2022NodeBody["transport"])
+	}
+
 	remove := performJSONRequest(t, handler, http.MethodDelete, "/nodes/"+itoa(nodeID), "")
 	if remove.Code != http.StatusNoContent {
 		t.Fatalf("delete node status = %d, body = %s", remove.Code, remove.Body.String())
