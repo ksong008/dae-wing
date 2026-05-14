@@ -62,6 +62,7 @@ var (
 	listen            string
 	apiOnly           bool
 	pprofListen       string
+	getIfAddrs        = common.GetIfAddrs
 
 	restoreRunningTimeout = 30 * time.Second
 
@@ -215,7 +216,23 @@ func isLocalOrigin(origin string) bool {
 		return true
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	addrs, err := getIfAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		localIP := net.ParseIP(addr)
+		if localIP != nil && ip.Equal(localIP) {
+			return true
+		}
+	}
+	return false
 }
 
 const (

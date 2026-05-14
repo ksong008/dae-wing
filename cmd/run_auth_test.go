@@ -43,6 +43,11 @@ func TestControlPlaneCORSRestrictsOrigins(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
+	originalGetIfAddrs := getIfAddrs
+	t.Cleanup(func() {
+		getIfAddrs = originalGetIfAddrs
+	})
+
 	t.Run("allows local origin", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
 		req.Header.Set("Origin", "http://127.0.0.1:5173")
@@ -56,7 +61,28 @@ func TestControlPlaneCORSRestrictsOrigins(t *testing.T) {
 		}
 	})
 
+	t.Run("allows current machine LAN IP origin", func(t *testing.T) {
+		getIfAddrs = func() ([]string, error) {
+			return []string{"192.168.10.20"}, nil
+		}
+
+		req := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
+		req.Header.Set("Origin", "http://192.168.10.20:4173")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://192.168.10.20:4173" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want LAN IP origin", got)
+		}
+	})
+
 	t.Run("rejects remote origin", func(t *testing.T) {
+		getIfAddrs = func() ([]string, error) {
+			return []string{"192.168.10.20"}, nil
+		}
+
 		req := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
 		req.Header.Set("Origin", "https://example.com")
 		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
