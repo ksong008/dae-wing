@@ -14,6 +14,8 @@ import (
 
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/orchestrator"
+	daeConfig "github.com/daeuniverse/dae/config"
+	"github.com/daeuniverse/dae/pkg/config_parser"
 )
 
 func TestAuthAndUserHandlers(t *testing.T) {
@@ -710,6 +712,95 @@ func TestUserDAEConfigFileHandlers(t *testing.T) {
 	}
 	if len(subnodeGroup.Node) != 1 || subnodeGroup.Node[0].Name != "sub-node" || subnodeGroup.Node[0].SubscriptionID == nil || *subnodeGroup.Node[0].SubscriptionID == 0 {
 		t.Fatalf("subnode group nodes = %#v", subnodeGroup.Node)
+	}
+}
+
+func TestUserDAEConfigFileExportSanitizesInvalidTags(t *testing.T) {
+	if err := db.InitDatabase(t.TempDir()); err != nil {
+		t.Fatalf("init database: %v", err)
+	}
+	handler := NewHandler()
+
+	if token, err := orchestrator.CreateUser(context.Background(), "admin", "abc123"); err != nil || token == "" {
+		t.Fatalf("seed auth user: %v", err)
+	}
+	var user db.User
+	if err := db.DB(context.Background()).Where("username = ?", "admin").First(&user).Error; err != nil {
+		t.Fatalf("load auth user: %v", err)
+	}
+
+	cfg := db.Config{Name: "active", Global: "global {\n  log_level: info\n}", Selected: true}
+	dns := db.Dns{Name: "active_dns", Dns: "dns {\n  routing {\n    request {\n      fallback: direct\n    }\n  }\n}", Selected: true}
+	routing := db.Routing{Name: "active_routing", Routing: "routing {\n  fallback: proxy\n}", Selected: true}
+	if err := db.DB(context.Background()).Create(&cfg).Error; err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&dns).Error; err != nil {
+		t.Fatalf("seed dns: %v", err)
+	}
+	if err := db.DB(context.Background()).Create(&routing).Error; err != nil {
+		t.Fatalf("seed routing: %v", err)
+	}
+
+	invalidSubTag := "sub tag"
+	subscription := db.Subscription{
+		UpdatedAt:  time.Now(),
+		Link:       "https://example.invalid/sub",
+		CronExp:    "10 */6 * * *",
+		CronEnable: true,
+		Status:     "ok",
+		Info:       "seed",
+		Tag:        &invalidSubTag,
+	}
+	if err := db.DB(context.Background()).Create(&subscription).Error; err != nil {
+		t.Fatalf("seed subscription: %v", err)
+	}
+
+	invalidNodeTag := "manual tag"
+	manualNode := db.Node{
+		Link:     "ss://2022-blake3-aes-128-gcm:MTIzNDU2Nzg5MDEyMzQ1Ng==@manual.example:443#manual",
+		Name:     "manual",
+		Address:  "manual.example:443",
+		Protocol: "shadowsocks",
+		Tag:      &invalidNodeTag,
+	}
+	if err := db.DB(context.Background()).Create(&manualNode).Error; err != nil {
+		t.Fatalf("seed manual node: %v", err)
+	}
+	group := db.Group{Name: "proxy", Policy: "fixed"}
+	if err := db.DB(context.Background()).Create(&group).Error; err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if err := db.DB(context.Background()).Model(&group).Association("Node").Append(&manualNode); err != nil {
+		t.Fatalf("bind manual node: %v", err)
+	}
+
+	exportResp := performRawRequest(handler, http.MethodGet, "/user/me/dae-config-file", "", &user)
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("export dae config code = %d, body = %s", exportResp.Code, exportResp.Body.String())
+	}
+	exported := decodeBody(t, exportResp)
+	content := exported["content"].(string)
+	if strings.Contains(content, "sub tag:") || strings.Contains(content, "manual tag:") {
+		t.Fatalf("exported content contains invalid raw tag:\n%s", content)
+	}
+	if !strings.Contains(content, "sub_tag:") || !strings.Contains(content, "manual_tag:") {
+		t.Fatalf("exported content missing sanitized tags:\n%s", content)
+	}
+	if !strings.Contains(content, `name("manual_tag")`) {
+		t.Fatalf("exported group filter missing sanitized node tag:\n%s", content)
+	}
+	warnings := exported["warnings"].([]any)
+	if len(warnings) != 2 {
+		t.Fatalf("warnings len = %d, want 2: %#v", len(warnings), warnings)
+	}
+
+	sections, err := config_parser.Parse(content)
+	if err != nil {
+		t.Fatalf("parse exported content: %v\n%s", err, content)
+	}
+	if _, err := daeConfig.New(sections); err != nil {
+		t.Fatalf("build exported config: %v\n%s", err, content)
 	}
 }
 

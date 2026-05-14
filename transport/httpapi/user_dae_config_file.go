@@ -692,13 +692,20 @@ func (s *nativeExportState) populate(conf *daeConfig.Config) []daeConfigFileIssu
 	sort.Slice(subIDs, func(i, j int) bool { return subIDs[i] < subIDs[j] })
 	for _, id := range subIDs {
 		sub := seenSubscriptions[id]
-		tag := exportTag(sub.Tag, "sub", sub.ID, s.used)
+		tag, tagState := exportTag(sub.Tag, "sub", sub.ID, s.used)
 		subTagByID[sub.ID] = tag
-		if sub.Tag == nil || *sub.Tag == "" {
+		switch tagState {
+		case exportTagSynthesized:
 			warnings = append(warnings, daeConfigFileIssue{
 				Level:   daeConfigIssueWarn,
 				Code:    "subscription_tag_synthesized",
 				Message: fmt.Sprintf("subscription %q exported with synthesized tag %q", sub.Link, tag),
+			})
+		case exportTagSanitized:
+			warnings = append(warnings, daeConfigFileIssue{
+				Level:   daeConfigIssueLossy,
+				Code:    "subscription_tag_sanitized",
+				Message: fmt.Sprintf("subscription %q tag %q is not a valid dae identifier; exported as %q", sub.Link, *sub.Tag, tag),
 			})
 		}
 		conf.Subscription = append(conf.Subscription, daeConfig.KeyableString(fmt.Sprintf("%s:%s", tag, sub.Link)))
@@ -711,13 +718,20 @@ func (s *nativeExportState) populate(conf *daeConfig.Config) []daeConfigFileIssu
 	sort.Slice(nodeIDs, func(i, j int) bool { return nodeIDs[i] < nodeIDs[j] })
 	for _, id := range nodeIDs {
 		node := seenIndependentNodes[id]
-		tag := exportTag(node.Tag, "node", node.ID, s.used)
+		tag, tagState := exportTag(node.Tag, "node", node.ID, s.used)
 		manualNodeNameByID[node.ID] = tag
-		if node.Tag == nil || *node.Tag == "" {
+		switch tagState {
+		case exportTagSynthesized:
 			warnings = append(warnings, daeConfigFileIssue{
 				Level:   daeConfigIssueWarn,
 				Code:    "node_tag_synthesized",
 				Message: fmt.Sprintf("node %q exported with synthesized tag %q", node.Name, tag),
+			})
+		case exportTagSanitized:
+			warnings = append(warnings, daeConfigFileIssue{
+				Level:   daeConfigIssueLossy,
+				Code:    "node_tag_sanitized",
+				Message: fmt.Sprintf("node %q tag %q is not a valid dae identifier; exported as %q", node.Name, *node.Tag, tag),
 			})
 		}
 		conf.Node = append(conf.Node, daeConfig.KeyableString(fmt.Sprintf("%s:%s", tag, node.Link)))
@@ -829,12 +843,29 @@ func exportPolicy(policy string, params []db.GroupPolicyParam) daeConfig.Functio
 	}
 }
 
-func exportTag(existing *string, prefix string, id uint, used map[string]struct{}) string {
+type exportTagState int
+
+const (
+	exportTagPreserved exportTagState = iota
+	exportTagSynthesized
+	exportTagSanitized
+)
+
+var daeIdentifierPattern = regexp.MustCompile(`^[a-zA-Z_][-a-zA-Z0-9_/\\^*+.=@$!#%]*$`)
+
+func exportTag(existing *string, prefix string, id uint, used map[string]struct{}) (string, exportTagState) {
 	if existing != nil && *existing != "" {
-		used[*existing] = struct{}{}
-		return *existing
+		if daeIdentifierPattern.MatchString(*existing) {
+			used[*existing] = struct{}{}
+			return *existing, exportTagPreserved
+		}
+		return uniqueExportIdentifier(sanitizeExportIdentifier(*existing), used), exportTagSanitized
 	}
 	base := sanitizeExportIdentifier(fmt.Sprintf("%s_%d", prefix, id))
+	return uniqueExportIdentifier(base, used), exportTagSynthesized
+}
+
+func uniqueExportIdentifier(base string, used map[string]struct{}) string {
 	tag := base
 	for i := 1; ; i++ {
 		if _, ok := used[tag]; !ok {
