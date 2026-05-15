@@ -36,7 +36,6 @@ type NodeLatencyResult struct {
 
 var nodeLatencyCache = struct {
 	mu        sync.RWMutex
-	refreshMu sync.Mutex
 	updatedAt time.Time
 	items     map[uint]*NodeLatencyResult
 }{
@@ -82,8 +81,6 @@ func pruneNodeLatencyCacheLocked(now time.Time) {
 }
 
 func QueryNodeLatencies(ctx context.Context, ids []uint) ([]*NodeLatencyResult, error) {
-	_ = refreshNodeLatencyCacheIfNeeded(ctx)
-
 	nodes, err := latencyProbeNodes(ctx, ids)
 	if err != nil {
 		return nil, err
@@ -212,12 +209,6 @@ func snapshotCachedNodeLatencyResults() map[uint]*NodeLatencyResult {
 	return results
 }
 
-func lastNodeLatencyCacheUpdatedAt() time.Time {
-	nodeLatencyCache.mu.RLock()
-	defer nodeLatencyCache.mu.RUnlock()
-	return nodeLatencyCache.updatedAt
-}
-
 func loadRuntimeNodeLatencyResults() (map[uint]*NodeLatencyResult, error) {
 	ctl, err := engine.Default().ControlPlane()
 	if err != nil {
@@ -281,67 +272,6 @@ func runningNodeID(name string) (uint, bool) {
 	defer runtimeNodeIndex.mu.RUnlock()
 	id, ok := runtimeNodeIndex.idsByName[name]
 	return id, ok
-}
-
-func selectedCheckInterval(ctx context.Context) (time.Duration, error) {
-	var configModel db.Config
-	if err := db.DB(ctx).Where("selected = ?", true).First(&configModel).Error; err != nil {
-		return 0, err
-	}
-
-	parsedConfig, err := engine.Default().ParseConfig(&configModel.Global, nil, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	if parsedConfig.Global.CheckInterval <= 0 {
-		return 30 * time.Second, nil
-	}
-
-	return parsedConfig.Global.CheckInterval, nil
-}
-
-func refreshNodeLatencyCache(ctx context.Context) error {
-	option, err := latencyProbeOption(ctx)
-	if err != nil {
-		return err
-	}
-
-	nodes, err := latencyProbeNodes(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	results := testNodeLatencyResultsForNodes(option, nodes)
-	replaceNodeLatencyResults(results)
-
-	if ctl, err := engine.Default().ControlPlane(); err == nil {
-		ctl.TriggerLatencyChecks()
-	}
-
-	return nil
-}
-
-func refreshNodeLatencyCacheIfNeeded(ctx context.Context) error {
-	interval, err := selectedCheckInterval(ctx)
-	if err != nil {
-		return err
-	}
-
-	lastUpdated := lastNodeLatencyCacheUpdatedAt()
-	if !lastUpdated.IsZero() && time.Since(lastUpdated) < interval {
-		return nil
-	}
-
-	nodeLatencyCache.refreshMu.Lock()
-	defer nodeLatencyCache.refreshMu.Unlock()
-
-	lastUpdated = lastNodeLatencyCacheUpdatedAt()
-	if !lastUpdated.IsZero() && time.Since(lastUpdated) < interval {
-		return nil
-	}
-
-	return refreshNodeLatencyCache(ctx)
 }
 
 func latencyProbeOption(ctx context.Context) (*dialer.GlobalOption, error) {

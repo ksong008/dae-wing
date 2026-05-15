@@ -64,6 +64,20 @@ type groupNodesRequest struct {
 	NodeIDs []uint `json:"nodeIds"`
 }
 
+type groupMatchedNodeResources struct {
+	count int
+	items []nodeResource
+}
+
+type groupMatchedNodeResourceCache struct {
+	items map[groupMatchedNodeResourceCacheKey]groupMatchedNodeResources
+}
+
+type groupMatchedNodeResourceCacheKey struct {
+	subscriptionID  uint
+	nameFilterRegex string
+}
+
 func handleGroups(rw http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -250,6 +264,9 @@ func writeAssociationMutationError(rw http.ResponseWriter, err error) {
 
 func toGroupResources(models []db.Group) ([]groupResource, error) {
 	items := make([]groupResource, 0, len(models))
+	matchedNodeCache := groupMatchedNodeResourceCache{
+		items: make(map[groupMatchedNodeResourceCacheKey]groupMatchedNodeResources),
+	}
 	for _, model := range models {
 		nodeResources := make([]nodeResource, 0, len(model.Node))
 		for _, node := range model.Node {
@@ -258,19 +275,15 @@ func toGroupResources(models []db.Group) ([]groupResource, error) {
 
 		bindingResources := make([]groupSubscriptionResource, 0, len(model.SubscriptionBindings))
 		for _, binding := range model.SubscriptionBindings {
-			matchedNodes, err := orchestrator.MatchedNodesForGroupBinding(&binding)
+			matched, err := matchedNodeCache.resources(&binding)
 			if err != nil {
 				return nil, err
-			}
-			matchedResources := make([]nodeResource, 0, len(matchedNodes))
-			for _, matchedNode := range matchedNodes {
-				matchedResources = append(matchedResources, toNodeResource(&matchedNode))
 			}
 			bindingResources = append(bindingResources, groupSubscriptionResource{
 				SubscriptionID:  binding.SubscriptionID,
 				NameFilterRegex: binding.NameFilterRegex,
-				MatchedCount:    len(matchedNodes),
-				MatchedNodes:    matchedResources,
+				MatchedCount:    matched.count,
+				MatchedNodes:    matched.items,
 				UpdatedAt:       binding.Subscription.UpdatedAt.Format(time.RFC3339Nano),
 				Status:          binding.Subscription.Status,
 				Info:            binding.Subscription.Info,
@@ -298,6 +311,33 @@ func toGroupResources(models []db.Group) ([]groupResource, error) {
 		})
 	}
 	return items, nil
+}
+
+func (c *groupMatchedNodeResourceCache) resources(binding *db.GroupSubscription) (groupMatchedNodeResources, error) {
+	key := groupMatchedNodeResourceCacheKey{
+		subscriptionID: binding.SubscriptionID,
+	}
+	if binding.NameFilterRegex != nil {
+		key.nameFilterRegex = *binding.NameFilterRegex
+	}
+	if cached, ok := c.items[key]; ok {
+		return cached, nil
+	}
+
+	matchedNodes, err := orchestrator.MatchedNodesForGroupBinding(binding)
+	if err != nil {
+		return groupMatchedNodeResources{}, err
+	}
+	matchedResources := make([]nodeResource, 0, len(matchedNodes))
+	for _, matchedNode := range matchedNodes {
+		matchedResources = append(matchedResources, toNodeResource(&matchedNode))
+	}
+	result := groupMatchedNodeResources{
+		count: len(matchedNodes),
+		items: matchedResources,
+	}
+	c.items[key] = result
+	return result, nil
 }
 
 func toConfigParams(params []paramResource) []config_parser.Param {
