@@ -37,6 +37,8 @@ var (
 	subscriptionSchedulerMu sync.Mutex
 )
 
+const subscriptionRefreshReloadTimeout = 30 * time.Second
+
 func ImportSubscription(ctx context.Context, rollbackError bool, arg ImportArgument) (result *SubscriptionImportResult, err error) {
 	if arg.Tag != nil {
 		if err = common.ValidateTag(*arg.Tag); err != nil {
@@ -115,6 +117,13 @@ func RefreshSubscription(ctx context.Context, id uint) (sub *db.Subscription, er
                 inner join group_nodes on group_nodes.node_id = nodes.id
                 where subscription_id = ?`, id)
 
+	var preservedNodes []db.Node
+	if err = tx.Where("subscription_id = ?", id).
+		Where("id in (?)", subQuery).
+		Find(&preservedNodes).Error; err != nil {
+		return nil, err
+	}
+
 	var removedNodes []db.Node
 	if err = tx.Where("subscription_id = ?", id).
 		Where("id not in (?)", subQuery).
@@ -133,7 +142,7 @@ func RefreshSubscription(ctx context.Context, id uint) (sub *db.Subscription, er
 	for _, link := range links {
 		nodeArgs = append(nodeArgs, ImportArgument{Link: link})
 	}
-	nodeResults, err := ImportNodes(tx, false, &id, nodeArgs)
+	nodeResults, updatedPreservedNodeIDs, err := refreshSubscriptionNodes(tx, id, nodeArgs, preservedNodes)
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +150,9 @@ func RefreshSubscription(ctx context.Context, id uint) (sub *db.Subscription, er
 		return nil, fmt.Errorf("interrupt to update subscription: no any valid node can be imported")
 	}
 
+	if err = autoUpdateGroupVersionsByNodeIDs(tx, updatedPreservedNodeIDs); err != nil {
+		return nil, err
+	}
 	if err = tx.Model(&current).
 		Clauses(clause.Returning{}).
 		Where(&db.Subscription{ID: id}).
@@ -154,11 +166,138 @@ func RefreshSubscription(ctx context.Context, id uint) (sub *db.Subscription, er
 	for _, node := range removedNodes {
 		removedIDs = append(removedIDs, node.ID)
 	}
+	latencyInvalidatedIDs := append(removedIDs, updatedPreservedNodeIDs...)
 	if err = tx.Commit().Error; err != nil {
 		return nil, err
 	}
-	removeNodeLatencyResults(removedIDs)
+	removeNodeLatencyResults(latencyInvalidatedIDs)
+	if err = reloadRuntimeAfterSubscriptionRefresh(ctx); err != nil {
+		return nil, err
+	}
 	return &current, nil
+}
+
+func refreshSubscriptionNodes(
+	tx *gorm.DB,
+	subscriptionID uint,
+	args []ImportArgument,
+	preservedNodes []db.Node,
+) (results []*NodeImportResult, updatedPreservedNodeIDs []uint, err error) {
+	subscriptionIDPtr := &subscriptionID
+	type nodeCandidate struct {
+		arg   ImportArgument
+		model *db.Node
+	}
+
+	candidates := make([]nodeCandidate, 0, len(args))
+	incomingNameCounts := make(map[string]int, len(args))
+	for _, arg := range args {
+		model, importErr := db.NewNodeModel(arg.Link, arg.Tag, subscriptionIDPtr)
+		if importErr != nil {
+			message := importErr.Error()
+			results = append(results, &NodeImportResult{
+				Link:  arg.Link,
+				Error: &message,
+			})
+			continue
+		}
+		candidates = append(candidates, nodeCandidate{
+			arg:   arg,
+			model: model,
+		})
+		incomingNameCounts[model.Name]++
+	}
+
+	preservedNameCounts := make(map[string]int, len(preservedNodes))
+	preservedByName := make(map[string]*db.Node, len(preservedNodes))
+	for i := range preservedNodes {
+		node := &preservedNodes[i]
+		preservedNameCounts[node.Name]++
+		preservedByName[node.Name] = node
+	}
+
+	for _, candidate := range candidates {
+		model := candidate.model
+		if incomingNameCounts[model.Name] == 1 && preservedNameCounts[model.Name] == 1 {
+			preserved := preservedByName[model.Name]
+			updatedModel := *model
+			updatedModel.ID = preserved.ID
+
+			if subscriptionNodeChanged(preserved, model) {
+				if err = tx.Model(&db.Node{ID: preserved.ID}).Updates(map[string]any{
+					"link":            model.Link,
+					"name":            model.Name,
+					"address":         model.Address,
+					"protocol":        model.Protocol,
+					"tag":             model.Tag,
+					"subscription_id": model.SubscriptionID,
+				}).Error; err != nil {
+					return nil, nil, err
+				}
+				updatedPreservedNodeIDs = append(updatedPreservedNodeIDs, preserved.ID)
+			}
+
+			results = append(results, &NodeImportResult{
+				Link: candidate.arg.Link,
+				Node: &updatedModel,
+			})
+			continue
+		}
+
+		var count int64
+		if err = tx.Model(&db.Node{}).
+			Where("link = ?", candidate.arg.Link).
+			Where("subscription_id = ?", subscriptionIDPtr).
+			Count(&count).Error; err != nil {
+			return nil, nil, err
+		}
+		if count > 0 {
+			message := ErrNodeDuplicated.Error()
+			results = append(results, &NodeImportResult{
+				Link:  candidate.arg.Link,
+				Error: &message,
+			})
+			continue
+		}
+		if err = tx.Create(model).Error; err != nil {
+			return nil, nil, err
+		}
+		results = append(results, &NodeImportResult{
+			Link: candidate.arg.Link,
+			Node: model,
+		})
+	}
+	return results, updatedPreservedNodeIDs, nil
+}
+
+func subscriptionNodeChanged(current *db.Node, next *db.Node) bool {
+	return current.Link != next.Link ||
+		current.Name != next.Name ||
+		current.Address != next.Address ||
+		current.Protocol != next.Protocol ||
+		current.SubscriptionID == nil ||
+		next.SubscriptionID == nil ||
+		*current.SubscriptionID != *next.SubscriptionID
+}
+
+func reloadRuntimeAfterSubscriptionRefresh(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	modified, err := runtimeModified(ctx)
+	if err != nil {
+		return err
+	}
+	if !modified {
+		return nil
+	}
+
+	reloadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subscriptionRefreshReloadTimeout)
+	defer cancel()
+	if err := RestoreRunningState(reloadCtx); err != nil {
+		return fmt.Errorf("failed to reload runtime after subscription refresh: %w", err)
+	}
+	return nil
 }
 
 func UpdateSubscription(ctx context.Context, id uint, input SubscriptionUpdateInput) (sub *db.Subscription, err error) {

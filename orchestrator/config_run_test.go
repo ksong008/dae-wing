@@ -99,6 +99,7 @@ type blockingReloadService struct {
 	reloadRelease chan struct{}
 	startOnce     sync.Once
 	releaseOnce   sync.Once
+	reloadCalls   atomic.Int32
 	stopCalls     atomic.Int32
 }
 
@@ -152,6 +153,7 @@ func (s *blockingReloadService) Reload(conf *daeConfig.Config) error {
 }
 
 func (s *blockingReloadService) ReloadContext(ctx context.Context, conf *daeConfig.Config) error {
+	s.reloadCalls.Add(1)
 	s.startOnce.Do(func() {
 		close(s.reloadStarted)
 	})
