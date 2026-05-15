@@ -20,6 +20,8 @@ import (
 	"github.com/daeuniverse/outbound/dialer/v2ray"
 )
 
+const vlessFlowTransportPrefix = "xtls-rprx-"
+
 type nodeResource struct {
 	ID             uint    `json:"id"`
 	Link           string  `json:"link"`
@@ -334,6 +336,9 @@ func parseV2RayTransport(link string) (string, error) {
 	if err != nil || parsed == nil {
 		return "", err
 	}
+	if parsed.Flow != "" && parsed.Flow != "none" {
+		return formatV2RayFlowTransport(parsed.Flow), nil
+	}
 	switch parsed.Net {
 	case "http", "http2":
 		return "h2", nil
@@ -342,6 +347,10 @@ func parseV2RayTransport(link string) (string, error) {
 	default:
 		return parsed.Net, nil
 	}
+}
+
+func formatV2RayFlowTransport(flow string) string {
+	return strings.TrimPrefix(flow, vlessFlowTransportPrefix)
 }
 
 func toNodeImportResultResponses(results []*orchestrator.NodeImportResult) []nodeImportResultResponse {

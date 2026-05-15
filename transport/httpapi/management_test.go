@@ -120,6 +120,24 @@ func TestNodeManagementHandlers(t *testing.T) {
 		t.Fatalf("ss2022 node transport = %#v, want ss2022", ss2022NodeBody["transport"])
 	}
 
+	vlessVisionNode := db.Node{
+		Link:     "vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none&security=reality&sni=example.com&fp=chrome&pbk=abc&sid=123&type=tcp&flow=xtls-rprx-vision#vision",
+		Name:     "VLESS Vision Node",
+		Address:  "example.com:443",
+		Protocol: "vless",
+	}
+	if err := db.DB(context.Background()).Create(&vlessVisionNode).Error; err != nil {
+		t.Fatalf("seed vless vision node: %v", err)
+	}
+	vlessVisionNodeResp := performJSONRequest(t, handler, http.MethodGet, "/nodes/"+itoa(int(vlessVisionNode.ID)), "")
+	if vlessVisionNodeResp.Code != http.StatusOK {
+		t.Fatalf("get vless vision node status = %d, body = %s", vlessVisionNodeResp.Code, vlessVisionNodeResp.Body.String())
+	}
+	vlessVisionNodeBody := decodeBody(t, vlessVisionNodeResp)
+	if got, ok := vlessVisionNodeBody["transport"].(string); !ok || got != "vision" {
+		t.Fatalf("vless vision node transport = %#v, want vision", vlessVisionNodeBody["transport"])
+	}
+
 	remove := performJSONRequest(t, handler, http.MethodDelete, "/nodes/"+itoa(nodeID), "")
 	if remove.Code != http.StatusNoContent {
 		t.Fatalf("delete node status = %d, body = %s", remove.Code, remove.Body.String())
