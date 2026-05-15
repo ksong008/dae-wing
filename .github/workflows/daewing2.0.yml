@@ -115,7 +115,7 @@ jobs:
           fi
 
   build-smoke:
-    needs: go-surface-checks
+    needs: unit-full
     name: Build
     runs-on: ubuntu-22.04
     timeout-minutes: 30
