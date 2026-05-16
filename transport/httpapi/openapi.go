@@ -147,7 +147,7 @@ func openAPIPaths() map[string]any {
 				"responses": map[string]any{"200": jsonResponse("dae bundle imported.", "BooleanResult")},
 			},
 		},
-			"/api/user/me/dae-config-file": map[string]any{
+		"/api/user/me/dae-config-file": map[string]any{
 			"get": map[string]any{
 				"summary":     "Export dae config file",
 				"description": "Exports the currently selected config, dns, routing, and referenced group resources as a native dae configuration file.",
@@ -160,21 +160,21 @@ func openAPIPaths() map[string]any {
 					"required": true,
 					"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("DAEConfigFileImportRequest")}},
 				},
-					"responses": map[string]any{"200": jsonResponse("dae config file imported.", "DAEConfigFileImportResponse")},
-				},
+				"responses": map[string]any{"200": jsonResponse("dae config file imported.", "DAEConfigFileImportResponse")},
 			},
-			"/api/user/me/dae-config-file/preview": map[string]any{
-				"post": map[string]any{
-					"summary":     "Preview dae config file import",
-					"description": "Parses a native dae configuration file and returns the projected control-plane snapshot plus import warnings without changing stored resources.",
-					"requestBody": map[string]any{
-						"required": true,
-						"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("DAEConfigFileImportRequest")}},
-					},
-					"responses": map[string]any{"200": jsonResponse("dae config file preview.", "DAEConfigFilePreviewResponse")},
+		},
+		"/api/user/me/dae-config-file/preview": map[string]any{
+			"post": map[string]any{
+				"summary":     "Preview dae config file import",
+				"description": "Parses a native dae configuration file and returns the projected control-plane snapshot plus import warnings without changing stored resources.",
+				"requestBody": map[string]any{
+					"required": true,
+					"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("DAEConfigFileImportRequest")}},
 				},
+				"responses": map[string]any{"200": jsonResponse("dae config file preview.", "DAEConfigFilePreviewResponse")},
 			},
-			"/api/user/me/default-resources": map[string]any{
+		},
+		"/api/user/me/default-resources": map[string]any{
 			"post": map[string]any{
 				"summary":     "Ensure current user default resources",
 				"description": "Ensures default config, routing, dns, group, and mode values for the authenticated user and persists them into JSON storage.",
@@ -256,6 +256,22 @@ func openAPIPaths() map[string]any {
 				},
 			},
 		},
+		"/api/runtime/log-level": map[string]any{
+			"get": map[string]any{
+				"summary":     "Read runtime log level",
+				"description": "Returns the current in-process log level.",
+				"responses":   map[string]any{"200": jsonResponse("Runtime log level.", "RuntimeLogLevel")},
+			},
+			"patch": map[string]any{
+				"summary":     "Set runtime log level",
+				"description": "Applies a new in-process log level immediately without reloading dae.",
+				"requestBody": map[string]any{
+					"required": true,
+					"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("RuntimeLogLevel")}},
+				},
+				"responses": map[string]any{"200": jsonResponse("Runtime log level updated.", "RuntimeLogLevel")},
+			},
+		},
 		"/api/runtime/reload": map[string]any{
 			"post": map[string]any{
 				"summary":     "Reload selected runtime config",
@@ -301,6 +317,35 @@ func openAPIPaths() map[string]any {
 				},
 			},
 		},
+		"/api/logs": map[string]any{
+			"get": map[string]any{
+				"summary":     "Query runtime logs",
+				"description": "Reads the bounded on-disk JSONL runtime log cache.",
+				"parameters":  logQueryParameters(),
+				"responses":   map[string]any{"200": jsonResponse("Runtime logs.", "LogList")},
+			},
+			"delete": map[string]any{
+				"summary":     "Clear runtime logs",
+				"description": "Clears the on-disk runtime log cache.",
+				"responses":   map[string]any{"200": jsonResponse("Runtime logs cleared.", "LogClearResponse")},
+			},
+		},
+		"/api/logs/settings": map[string]any{
+			"get": map[string]any{
+				"summary":     "Read runtime log cache settings",
+				"description": "Returns the current log cache entry and file-size limits.",
+				"responses":   map[string]any{"200": jsonResponse("Runtime log cache settings.", "LogSettings")},
+			},
+			"patch": map[string]any{
+				"summary":     "Update runtime log cache settings",
+				"description": "Updates log cache limits and prunes the on-disk cache immediately.",
+				"requestBody": map[string]any{
+					"required": true,
+					"content":  map[string]any{"application/json": map[string]any{"schema": schemaRef("LogSettingsPatch")}},
+				},
+				"responses": map[string]any{"200": jsonResponse("Runtime log cache settings updated.", "LogSettings")},
+			},
+		},
 		"/api/events/runtime": map[string]any{
 			"get": map[string]any{
 				"summary":     "Stream runtime events",
@@ -317,6 +362,57 @@ func openAPIPaths() map[string]any {
 					},
 				},
 			},
+		},
+		"/api/events/logs": map[string]any{
+			"get": map[string]any{
+				"summary":     "Stream runtime log events",
+				"description": "Streams new runtime log entries using Server-Sent Events.",
+				"parameters":  logEventsQueryParameters(),
+				"responses": map[string]any{
+					"200": map[string]any{
+						"description": "SSE stream.",
+						"content": map[string]any{
+							"text/event-stream": map[string]any{
+								"schema": map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func logEventsQueryParameters() []map[string]any {
+	parameters := append([]map[string]any{}, logQueryParameters()[:2]...)
+	parameters = append(parameters, map[string]any{
+		"name":        "access_token",
+		"in":          "query",
+		"description": "Optional bearer token fallback for browser EventSource clients that cannot attach Authorization headers.",
+		"schema":      map[string]any{"type": "string"},
+	})
+	return parameters
+}
+
+func logQueryParameters() []map[string]any {
+	return []map[string]any{
+		{
+			"name":        "level",
+			"in":          "query",
+			"description": "Optional log level filter. Use `all` or omit for all levels.",
+			"schema":      map[string]any{"type": "string"},
+		},
+		{
+			"name":        "q",
+			"in":          "query",
+			"description": "Optional case-insensitive keyword filter over message and structured fields.",
+			"schema":      map[string]any{"type": "string"},
+		},
+		{
+			"name":        "limit",
+			"in":          "query",
+			"description": "Maximum number of matching entries to return.",
+			"schema":      map[string]any{"type": "integer", "default": 500, "maximum": 2000},
 		},
 	}
 }
@@ -379,6 +475,56 @@ func openAPISchemas() map[string]any {
 					"type":  "array",
 					"items": schemaRef("RuntimeTrafficSample"),
 				},
+			},
+		},
+		"RuntimeLogLevel": map[string]any{
+			"type":     "object",
+			"required": []string{"level"},
+			"properties": map[string]any{
+				"level": map[string]any{"type": "string"},
+			},
+		},
+		"LogEntry": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":      map[string]any{"type": "integer"},
+				"ts":      map[string]any{"type": "string", "format": "date-time"},
+				"level":   map[string]any{"type": "string"},
+				"message": map[string]any{"type": "string"},
+				"fields": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+		},
+		"LogList": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"items": map[string]any{"type": "array", "items": schemaRef("LogEntry")},
+			},
+		},
+		"LogSettings": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"maxEntries":    map[string]any{"type": "integer"},
+				"maxBytes":      map[string]any{"type": "integer"},
+				"minMaxEntries": map[string]any{"type": "integer"},
+				"maxMaxEntries": map[string]any{"type": "integer"},
+				"minMaxBytes":   map[string]any{"type": "integer"},
+				"maxMaxBytes":   map[string]any{"type": "integer"},
+			},
+		},
+		"LogSettingsPatch": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"maxEntries": map[string]any{"type": "integer"},
+				"maxBytes":   map[string]any{"type": "integer"},
+			},
+		},
+		"LogClearResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"cleared": map[string]any{"type": "boolean"},
 			},
 		},
 		"ReloadResponse": map[string]any{
@@ -698,21 +844,21 @@ func openAPISchemas() map[string]any {
 			},
 			"required": []string{"content"},
 		},
-			"DAEConfigFileImportResponse": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"imported": map[string]any{"type": "boolean"},
-					"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				},
+		"DAEConfigFileImportResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"imported": map[string]any{"type": "boolean"},
+				"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
-			"DAEConfigFilePreviewResponse": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"bundle":   schemaRef("DAEBundle"),
-					"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				},
+		},
+		"DAEConfigFilePreviewResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"bundle":   schemaRef("DAEBundle"),
+				"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
-			"DAEBundleDefaults": map[string]any{
+		},
+		"DAEBundleDefaults": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"configId":  map[string]any{"type": "integer"},

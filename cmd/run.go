@@ -19,6 +19,7 @@ import (
 	"github.com/daeuniverse/dae-wing/common"
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/engine"
+	"github.com/daeuniverse/dae-wing/logstore"
 	"github.com/daeuniverse/dae-wing/orchestrator"
 	"github.com/daeuniverse/dae-wing/transport/httpapi"
 	"github.com/daeuniverse/dae-wing/webrender"
@@ -102,6 +103,11 @@ var (
 				}
 				logrus.SetOutput(logOpts)
 				db.SetOutput(logOpts)
+			}
+			if err := logstore.Init(cfgDir); err != nil {
+				logrus.Warnln("Failed to initialize WebUI log cache:", err)
+			} else {
+				logrus.AddHook(logstore.Default())
 			}
 			go func() {
 				if err := engine.Default().Run(
@@ -237,6 +243,7 @@ func isLocalOrigin(origin string) bool {
 
 const (
 	runtimeEventsAPIPath       = "/api/events/runtime"
+	logEventsAPIPath           = "/api/events/logs"
 	runtimeEventsTokenQueryKey = "access_token"
 )
 
@@ -244,7 +251,7 @@ func requestAuthToken(r *http.Request) string {
 	if authorization := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); authorization != "" {
 		return authorization
 	}
-	if r.Method == http.MethodGet && r.URL.Path == runtimeEventsAPIPath {
+	if r.Method == http.MethodGet && (r.URL.Path == runtimeEventsAPIPath || r.URL.Path == logEventsAPIPath) {
 		return strings.TrimSpace(r.URL.Query().Get(runtimeEventsTokenQueryKey))
 	}
 	return ""

@@ -47,6 +47,7 @@ func InitDatabase(configDir string) (err error) {
 		&GroupSubscription{},
 		&GroupPolicyParam{},
 		&System{},
+		&LogSetting{},
 	); err != nil {
 		return err
 	}
@@ -60,6 +61,10 @@ func InitDatabase(configDir string) (err error) {
 	}
 
 	return nil
+}
+
+func IsInitialized() bool {
+	return db != nil
 }
 
 func DB(ctx context.Context) *gorm.DB {

@@ -106,8 +106,16 @@ func TestRequestAuthToken(t *testing.T) {
 		}
 	})
 
-	t.Run("accepts query token for runtime event stream only", func(t *testing.T) {
+	t.Run("accepts query token for runtime event stream", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, runtimeEventsAPIPath+"?access_token=query-token", nil)
+
+		if token := requestAuthToken(req); token != "query-token" {
+			t.Fatalf("requestAuthToken() = %q, want query-token", token)
+		}
+	})
+
+	t.Run("accepts query token for log event stream", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, logEventsAPIPath+"?access_token=query-token", nil)
 
 		if token := requestAuthToken(req); token != "query-token" {
 			t.Fatalf("requestAuthToken() = %q, want query-token", token)
@@ -160,6 +168,17 @@ func TestAuthAllowsRuntimeEventsQueryToken(t *testing.T) {
 
 	t.Run("runtime events query token authenticates", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, runtimeEventsAPIPath+"?access_token="+token, nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("log events query token authenticates", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, logEventsAPIPath+"?access_token="+token, nil)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)

@@ -111,9 +111,13 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/user/me/password", requireAuth(handleCurrentUserPassword))
 	mux.HandleFunc("/user/me/storage", requireAuth(handleCurrentUserStorage))
 	mux.HandleFunc("/runtime/overview", requireAuth(handleRuntimeOverview))
+	mux.HandleFunc("/runtime/log-level", requireAuth(handleRuntimeLogLevel))
 	mux.HandleFunc("/runtime/reload", requireAuth(handleRuntimeReload))
 	mux.HandleFunc("/runtime/stop", requireAuth(handleRuntimeStop))
 	mux.HandleFunc("/events/runtime", requireAuth(handleRuntimeEvents))
+	mux.HandleFunc("/events/logs", requireAuth(handleLogEvents))
+	mux.HandleFunc("/logs", requireAuth(handleLogs))
+	mux.HandleFunc("/logs/settings", requireAuth(handleLogSettings))
 	return mux
 }
 

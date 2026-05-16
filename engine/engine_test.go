@@ -52,6 +52,41 @@ func TestNativeServiceDryRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestNativeServiceSetLogLevelUpdatesCurrentLogger(t *testing.T) {
+	originalLevel := logrus.GetLevel()
+	t.Cleanup(func() {
+		logrus.SetLevel(originalLevel)
+	})
+
+	svc := newNativeService()
+	log := logrus.New()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(log, svc.EmptyConfig(), nil, true, true)
+	}()
+	waitNativeServiceRunning(t, svc)
+
+	svc.SetLogLevel(logrus.DebugLevel)
+	if got := log.GetLevel(); got != logrus.DebugLevel {
+		t.Fatalf("runtime logger level = %v, want debug", got)
+	}
+	if got := logrus.GetLevel(); got != logrus.DebugLevel {
+		t.Fatalf("standard logger level = %v, want debug", got)
+	}
+
+	if err := svc.Stop(2 * time.Second); err != nil {
+		t.Fatalf("stop engine: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dry-run engine to exit")
+	}
+}
+
 func TestNativeServiceReloadContextCanceledBeforeStart(t *testing.T) {
 	svc := newNativeService()
 	ctx, cancel := context.WithCancel(context.Background())

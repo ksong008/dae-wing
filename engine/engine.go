@@ -33,6 +33,7 @@ type Service interface {
 	ParseConfig(globalSection *string, dnsSection *string, routingSection *string) (*daeConfig.Config, error)
 	NecessaryOutbounds(routing *daeConfig.Routing) []string
 	Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string, disableTimestamp bool, dry bool) error
+	SetLogLevel(level logrus.Level)
 	Reload(conf *daeConfig.Config) error
 	ReloadContext(ctx context.Context, conf *daeConfig.Config) error
 	Stop(timeout time.Duration) error
@@ -107,6 +108,22 @@ func (n *nativeService) Run(log *logrus.Logger, conf *daeConfig.Config, externGe
 	err := runtime.Run(log, conf, externGeoDataDirs, disableTimestamp, dry)
 	n.markStopped(runtime)
 	return err
+}
+
+func (n *nativeService) SetLogLevel(level logrus.Level) {
+	n.mu.RLock()
+	log := n.log
+	runtime := n.engine
+	running := n.running
+	n.mu.RUnlock()
+
+	logrus.SetLevel(level)
+	if log != nil {
+		log.SetLevel(level)
+	}
+	if running && runtime != nil {
+		runtime.SetLogLevel(level)
+	}
 }
 
 func (n *nativeService) Reload(conf *daeConfig.Config) error {
