@@ -16,8 +16,10 @@ import (
 	"github.com/daeuniverse/dae-wing/db"
 	"github.com/daeuniverse/dae-wing/engine"
 	dialer "github.com/daeuniverse/dae/component/outbound/dialer"
+	"github.com/daeuniverse/dae/control"
 	"github.com/daeuniverse/outbound/protocol/direct"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 const (
@@ -86,13 +88,30 @@ func QueryNodeLatencies(ctx context.Context, ids []uint) ([]*NodeLatencyResult, 
 		return nil, err
 	}
 
-	merged := snapshotCachedNodeLatencyResults()
+	nodeIDs := make([]uint, 0, len(nodes))
+	for _, node := range nodes {
+		nodeIDs = append(nodeIDs, node.ID)
+	}
+
+	merged, err := loadPersistedNodeLatencyResults(ctx, nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	for id, result := range snapshotCachedNodeLatencyResults() {
+		if len(nodeIDs) > 0 && !containsUint(nodeIDs, id) {
+			continue
+		}
+		mergeNodeLatencyResult(merged, result)
+	}
 	runtimeResults, err := loadRuntimeNodeLatencyResults()
 	if err != nil {
 		return nil, err
 	}
-	for id, result := range runtimeResults {
-		merged[id] = result
+	for _, result := range runtimeResults {
+		mergeNodeLatencyResult(merged, result)
+	}
+	if err := persistNodeLatencyResults(ctx, mapsNodeLatencyValues(runtimeResults)); err != nil {
+		return nil, err
 	}
 
 	results := make([]*NodeLatencyResult, 0, len(nodes))
@@ -106,18 +125,33 @@ func QueryNodeLatencies(ctx context.Context, ids []uint) ([]*NodeLatencyResult, 
 }
 
 func TestNodeLatencies(ctx context.Context, ids []uint) ([]*NodeLatencyResult, error) {
-	option, err := latencyProbeOption(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	nodes, err := latencyProbeNodes(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
 
-	results := testNodeLatencyResultsForNodes(option, nodes)
+	results, runtimeTestedIDs, err := testRuntimeNodeLatencyResults(nodes)
+	if err != nil {
+		return nil, err
+	}
+	if len(runtimeTestedIDs) < len(nodes) {
+		option, err := latencyProbeOption(ctx)
+		if err != nil {
+			return nil, err
+		}
+		fallbackNodes := make([]db.Node, 0, len(nodes)-len(runtimeTestedIDs))
+		for _, node := range nodes {
+			if _, ok := runtimeTestedIDs[node.ID]; ok {
+				continue
+			}
+			fallbackNodes = append(fallbackNodes, node)
+		}
+		results = append(results, testNodeLatencyResultsForNodes(option, fallbackNodes)...)
+	}
 	storeNodeLatencyResults(results)
+	if err := persistNodeLatencyResults(ctx, results); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 
@@ -178,6 +212,13 @@ func removeNodeLatencyResults(ids []uint) {
 	}
 }
 
+func deleteNodeLatencyResultsWithTx(tx *gorm.DB, ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return tx.Where("node_id in ?", ids).Delete(&db.NodeLatencyResult{}).Error
+}
+
 func snapshotCachedNodeLatencyResults() map[uint]*NodeLatencyResult {
 	nodeLatencyCache.mu.RLock()
 	prunedNeeded := false
@@ -207,6 +248,55 @@ func snapshotCachedNodeLatencyResults() map[uint]*NodeLatencyResult {
 	}
 	nodeLatencyCache.mu.Unlock()
 	return results
+}
+
+func mergeNodeLatencyResult(results map[uint]*NodeLatencyResult, result *NodeLatencyResult) {
+	if result == nil {
+		return
+	}
+	current, ok := results[result.NodeID]
+	if !ok || current == nil || !result.TestedAt.Before(current.TestedAt) {
+		results[result.NodeID] = cloneNodeLatencyResult(result)
+	}
+}
+
+func loadPersistedNodeLatencyResults(ctx context.Context, ids []uint) (map[uint]*NodeLatencyResult, error) {
+	rows, err := db.ListNodeLatencyResults(ctx, ids, time.Now().Add(-nodeLatencyCacheTTL))
+	if err != nil {
+		return nil, err
+	}
+	results := make(map[uint]*NodeLatencyResult, len(rows))
+	for _, row := range rows {
+		result := &NodeLatencyResult{
+			NodeID:    row.NodeID,
+			LatencyMs: row.LatencyMs,
+			Alive:     row.Alive,
+			TestedAt:  row.TestedAt,
+			Message:   row.Message,
+		}
+		mergeNodeLatencyResult(results, result)
+	}
+	return results, nil
+}
+
+func persistNodeLatencyResults(ctx context.Context, results []*NodeLatencyResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	rows := make([]db.NodeLatencyResult, 0, len(results))
+	for _, result := range results {
+		if result == nil || result.TestedAt.IsZero() {
+			continue
+		}
+		rows = append(rows, db.NodeLatencyResult{
+			NodeID:    result.NodeID,
+			LatencyMs: result.LatencyMs,
+			Alive:     result.Alive,
+			TestedAt:  result.TestedAt,
+			Message:   result.Message,
+		})
+	}
+	return db.UpsertNodeLatencyResults(ctx, rows)
 }
 
 func loadRuntimeNodeLatencyResults() (map[uint]*NodeLatencyResult, error) {
@@ -343,6 +433,58 @@ func testNodeLatencyResultsForNodes(option *dialer.GlobalOption, nodes []db.Node
 	return results
 }
 
+func testRuntimeNodeLatencyResults(nodes []db.Node) ([]*NodeLatencyResult, map[uint]struct{}, error) {
+	testedIDs := make(map[uint]struct{})
+	ctl, err := engine.Default().ControlPlane()
+	if err != nil {
+		if engine.Default().IsControlPlaneNotInit(err) {
+			return nil, testedIDs, nil
+		}
+		return nil, nil, err
+	}
+
+	nodeIDsByLink := make(map[string][]uint, len(nodes))
+	links := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Link == "" {
+			continue
+		}
+		if _, ok := nodeIDsByLink[node.Link]; !ok {
+			links = append(links, node.Link)
+		}
+		nodeIDsByLink[node.Link] = append(nodeIDsByLink[node.Link], node.ID)
+	}
+
+	snapshots := ctl.ProbeNodeLatencies(links)
+	results := make([]*NodeLatencyResult, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		ids := nodeIDsByLink[snapshot.Link]
+		if len(ids) == 0 {
+			continue
+		}
+		for _, nodeID := range ids {
+			result := nodeLatencyResultFromSnapshot(nodeID, snapshot)
+			results = append(results, result)
+			testedIDs[nodeID] = struct{}{}
+		}
+	}
+	return results, testedIDs, nil
+}
+
+func nodeLatencyResultFromSnapshot(nodeID uint, snapshot control.NodeLatencySnapshot) *NodeLatencyResult {
+	var message *string
+	if !snapshot.Alive && snapshot.Message != "" {
+		message = stringPtr(snapshot.Message)
+	}
+	return &NodeLatencyResult{
+		NodeID:    nodeID,
+		LatencyMs: snapshot.LatencyMs,
+		Alive:     snapshot.Alive,
+		TestedAt:  snapshot.CheckedAt,
+		Message:   message,
+	}
+}
+
 func testSingleNodeLatency(option *dialer.GlobalOption, node *db.Node) *NodeLatencyResult {
 	result := &NodeLatencyResult{
 		NodeID:   node.ID,
@@ -382,6 +524,15 @@ func mapsNodeLatencyValues(items map[uint]*NodeLatencyResult) []*NodeLatencyResu
 		results = append(results, item)
 	}
 	return results
+}
+
+func containsUint(values []uint, target uint) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func NodeLatencyCacheStats() (entries int, updatedAt time.Time) {

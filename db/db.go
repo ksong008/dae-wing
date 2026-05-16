@@ -48,6 +48,7 @@ func InitDatabase(configDir string) (err error) {
 		&GroupPolicyParam{},
 		&System{},
 		&LogSetting{},
+		&NodeLatencyResult{},
 	); err != nil {
 		return err
 	}

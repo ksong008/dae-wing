@@ -742,9 +742,10 @@ func openAPISchemas() map[string]any {
 		"RuntimeStateResource": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"running":  map[string]any{"type": "boolean"},
-				"modified": map[string]any{"type": "boolean"},
-				"version":  map[string]any{"type": "string"},
+				"running":       map[string]any{"type": "boolean"},
+				"modified":      map[string]any{"type": "boolean"},
+				"version":       map[string]any{"type": "string"},
+				"netnsLinkMode": map[string]any{"type": "string", "enum": []string{"netkit", "veth"}},
 			},
 		},
 		"CacheStatsResource": map[string]any{

@@ -167,6 +167,9 @@ func RefreshSubscription(ctx context.Context, id uint) (sub *db.Subscription, er
 		removedIDs = append(removedIDs, node.ID)
 	}
 	latencyInvalidatedIDs := append(removedIDs, updatedPreservedNodeIDs...)
+	if err = deleteNodeLatencyResultsWithTx(tx, latencyInvalidatedIDs); err != nil {
+		return nil, err
+	}
 	if err = tx.Commit().Error; err != nil {
 		return nil, err
 	}
@@ -413,6 +416,9 @@ func DeleteSubscriptions(ctx context.Context, ids []uint) (count int32, err erro
 		return 0, err
 	}
 	if err = autoUpdateGroupVersionsBySubscriptionIDs(tx, ids); err != nil {
+		return 0, err
+	}
+	if err = deleteNodeLatencyResultsWithTx(tx, nodeIDs); err != nil {
 		return 0, err
 	}
 	if err = tx.Where("subscription_id in ?", ids).Delete(&db.Node{}).Error; err != nil {

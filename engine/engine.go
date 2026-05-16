@@ -38,6 +38,7 @@ type Service interface {
 	ReloadContext(ctx context.Context, conf *daeConfig.Config) error
 	Stop(timeout time.Duration) error
 	ControlPlane() (*control.ControlPlane, error)
+	NetnsLinkMode() string
 	GetRuntimeOverview(windowSec int, maxPoints int) (*RuntimeOverview, error)
 	HTTPTransport() http.RoundTripper
 	IsControlPlaneNotInit(err error) bool
@@ -169,6 +170,14 @@ func (n *nativeService) ControlPlane() (*control.ControlPlane, error) {
 		return nil, daeengine.ErrControlPlaneNotInit
 	}
 	return runtime.ControlPlane()
+}
+
+func (n *nativeService) NetnsLinkMode() string {
+	runtime, running := n.currentRuntime()
+	if !running || runtime == nil {
+		return ""
+	}
+	return runtime.NetnsLinkMode()
 }
 
 func (n *nativeService) GetRuntimeOverview(windowSec int, maxPoints int) (*RuntimeOverview, error) {

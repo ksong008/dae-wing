@@ -12,14 +12,16 @@ import (
 	"strings"
 
 	"github.com/daeuniverse/dae-wing/db"
+	"github.com/daeuniverse/dae-wing/engine"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
 type RuntimeState struct {
-	Running  bool
-	Modified bool
-	Version  string
+	Running       bool
+	Modified      bool
+	Version       string
+	NetnsLinkMode string
 }
 
 type InterfaceInfo struct {
@@ -46,9 +48,10 @@ func GetRuntimeState(ctx context.Context) (*RuntimeState, error) {
 		return nil, err
 	}
 	return &RuntimeState{
-		Running:  running,
-		Modified: modified,
-		Version:  db.AppVersion,
+		Running:       running,
+		Modified:      modified,
+		Version:       db.AppVersion,
+		NetnsLinkMode: runtimeNetnsLinkMode(),
 	}, nil
 }
 
@@ -92,6 +95,10 @@ func runtimeRunning(ctx context.Context) (bool, error) {
 		return false, q.Error
 	}
 	return model.Running, nil
+}
+
+func runtimeNetnsLinkMode() string {
+	return engine.Default().NetnsLinkMode()
 }
 
 func runtimeModified(ctx context.Context) (modified bool, err error) {

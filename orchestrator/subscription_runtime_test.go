@@ -27,6 +27,14 @@ func TestDeleteNodesClearsLatencyCache(t *testing.T) {
 		Alive:    true,
 		TestedAt: time.Now(),
 	}})
+	if err := db.UpsertNodeLatencyResults(context.Background(), []db.NodeLatencyResult{{
+		NodeID:    node.ID,
+		Alive:     true,
+		TestedAt:  time.Now(),
+		LatencyMs: int32Ptr(12),
+	}}); err != nil {
+		t.Fatalf("seed persisted latency: %v", err)
+	}
 
 	if _, ok := snapshotCachedNodeLatencyResults()[node.ID]; !ok {
 		t.Fatal("expected latency cache entry before delete")
@@ -41,6 +49,13 @@ func TestDeleteNodesClearsLatencyCache(t *testing.T) {
 	}
 	if _, ok := snapshotCachedNodeLatencyResults()[node.ID]; ok {
 		t.Fatal("expected latency cache entry to be cleared")
+	}
+	persisted, err := db.ListNodeLatencyResults(context.Background(), []uint{node.ID}, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("list persisted latency: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("expected persisted latency to be deleted, got %d entries", len(persisted))
 	}
 }
 
@@ -71,6 +86,14 @@ func TestDeleteSubscriptionsClearsLatencyCacheAndScheduler(t *testing.T) {
 		Alive:    true,
 		TestedAt: time.Now(),
 	}})
+	if err := db.UpsertNodeLatencyResults(context.Background(), []db.NodeLatencyResult{{
+		NodeID:    node.ID,
+		Alive:     true,
+		TestedAt:  time.Now(),
+		LatencyMs: int32Ptr(23),
+	}}); err != nil {
+		t.Fatalf("seed persisted latency: %v", err)
+	}
 	AddSubscriptionUpdateScheduler(context.Background(), sub.ID)
 
 	subscriptionSchedulerMu.Lock()
@@ -90,6 +113,13 @@ func TestDeleteSubscriptionsClearsLatencyCacheAndScheduler(t *testing.T) {
 	}
 	if _, ok := snapshotCachedNodeLatencyResults()[node.ID]; ok {
 		t.Fatal("expected latency cache entry to be cleared after subscription delete")
+	}
+	persisted, err := db.ListNodeLatencyResults(context.Background(), []uint{node.ID}, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("list persisted latency: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("expected persisted latency to be deleted after subscription delete, got %d entries", len(persisted))
 	}
 	if jobs, err = s.FindJobsByTag(subscriptionSchedulerTag(sub.ID)); err == nil && len(jobs) > 0 {
 		t.Fatalf("expected scheduler job to be removed, still have %d", len(jobs))
@@ -142,6 +172,14 @@ func TestRefreshSubscriptionUpdatesPreservedGroupNodeByName(t *testing.T) {
 		Alive:    true,
 		TestedAt: time.Now(),
 	}})
+	if err := db.UpsertNodeLatencyResults(context.Background(), []db.NodeLatencyResult{{
+		NodeID:    oldNode.ID,
+		Alive:     true,
+		TestedAt:  time.Now(),
+		LatencyMs: int32Ptr(34),
+	}}); err != nil {
+		t.Fatalf("seed persisted latency: %v", err)
+	}
 
 	if _, err := RefreshSubscription(context.Background(), sub.ID); err != nil {
 		t.Fatalf("refresh subscription: %v", err)
@@ -170,6 +208,13 @@ func TestRefreshSubscriptionUpdatesPreservedGroupNodeByName(t *testing.T) {
 	}
 	if _, ok := snapshotCachedNodeLatencyResults()[oldNode.ID]; ok {
 		t.Fatal("expected preserved node latency cache to be cleared after link update")
+	}
+	persisted, err := db.ListNodeLatencyResults(context.Background(), []uint{oldNode.ID}, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("list persisted latency: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("expected persisted latency to be cleared after link update, got %d entries", len(persisted))
 	}
 }
 

@@ -176,6 +176,10 @@ func (s *blockingReloadService) ControlPlane() (*control.ControlPlane, error) {
 	return nil, nil
 }
 
+func (s *blockingReloadService) NetnsLinkMode() string {
+	return ""
+}
+
 func (s *blockingReloadService) GetRuntimeOverview(windowSec int, maxPoints int) (*engine.RuntimeOverview, error) {
 	return &engine.RuntimeOverview{}, nil
 }

@@ -47,6 +47,42 @@ func TestQueryNodeLatenciesDoesNotRefreshAllNodes(t *testing.T) {
 	}
 }
 
+func TestQueryNodeLatenciesReturnsPersistedResult(t *testing.T) {
+	resetNodeLatencyCacheForQueryTest()
+	t.Cleanup(resetNodeLatencyCacheForQueryTest)
+
+	if err := db.InitDatabase(t.TempDir()); err != nil {
+		t.Fatalf("init database: %v", err)
+	}
+	node := db.Node{Link: "ss://persisted-node", Name: "Persisted", Address: "127.0.0.1", Protocol: "ss"}
+	if err := db.DB(context.Background()).Create(&node).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	testedAt := time.Now()
+	if err := db.UpsertNodeLatencyResults(context.Background(), []db.NodeLatencyResult{{
+		NodeID:    node.ID,
+		LatencyMs: int32Ptr(33),
+		Alive:     true,
+		TestedAt:  testedAt,
+	}}); err != nil {
+		t.Fatalf("seed persisted latency: %v", err)
+	}
+
+	results, err := QueryNodeLatencies(context.Background(), []uint{node.ID})
+	if err != nil {
+		t.Fatalf("query node latencies: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results len = %d, want 1", len(results))
+	}
+	if results[0].LatencyMs == nil || *results[0].LatencyMs != 33 {
+		t.Fatalf("latency = %v, want 33", results[0].LatencyMs)
+	}
+	if !results[0].TestedAt.Equal(testedAt) {
+		t.Fatalf("testedAt = %v, want %v", results[0].TestedAt, testedAt)
+	}
+}
+
 func resetNodeLatencyCacheForQueryTest() {
 	nodeLatencyCache.mu.Lock()
 	defer nodeLatencyCache.mu.Unlock()

@@ -83,6 +83,9 @@ func UpdateNode(ctx context.Context, id uint, link *string, tag *string) (node *
 		return nil, err
 	}
 	if link != nil {
+		if err = deleteNodeLatencyResultsWithTx(tx, []uint{id}); err != nil {
+			return nil, err
+		}
 		removeNodeLatencyResults([]uint{id})
 	}
 	return getNode(tx, id)
@@ -105,6 +108,9 @@ func DeleteNodes(ctx context.Context, ids []uint) (count int32, err error) {
 	defer finishTx(tx, &err)
 
 	if err = autoUpdateGroupVersionsByNodeIDs(tx, ids); err != nil {
+		return 0, err
+	}
+	if err = deleteNodeLatencyResultsWithTx(tx, ids); err != nil {
 		return 0, err
 	}
 

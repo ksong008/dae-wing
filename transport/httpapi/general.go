@@ -13,9 +13,10 @@ import (
 )
 
 type runtimeStateResource struct {
-	Running  bool   `json:"running"`
-	Modified bool   `json:"modified"`
-	Version  string `json:"version"`
+	Running       bool   `json:"running"`
+	Modified      bool   `json:"modified"`
+	Version       string `json:"version"`
+	NetnsLinkMode string `json:"netnsLinkMode,omitempty"`
 }
 
 type cacheStatsResource struct {
@@ -61,9 +62,10 @@ func handleGeneralState(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, http.StatusOK, runtimeStateResource{
-		Running:  state.Running,
-		Modified: state.Modified,
-		Version:  state.Version,
+		Running:       state.Running,
+		Modified:      state.Modified,
+		Version:       state.Version,
+		NetnsLinkMode: state.NetnsLinkMode,
 	})
 }
 
