@@ -18,7 +18,7 @@ require (
 	github.com/tidwall/gjson v1.14.4
 	github.com/tidwall/sjson v1.2.5
 	github.com/vearutop/statigz v1.3.0
-	github.com/vishvananda/netlink v1.1.0
+	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/crypto v0.43.0
 	golang.org/x/sys v0.37.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -76,7 +76,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/v2rayA/ahocorasick-domain v0.0.0-20231231085011-99ceb8ef3208 // indirect
-	github.com/vishvananda/netns v0.0.4 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
 	gitlab.com/yawning/chacha20.git v0.0.0-20230427033715-7877545b1b37 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
