@@ -83,6 +83,7 @@ func run(ctx context.Context, dry bool) (n int32, err error) {
 		if err != nil {
 			return 0, fmt.Errorf("failed to dryrun: %w; see more in log and report bugs", err)
 		}
+		stopNodeLatencySyncWorker()
 		clearRunningNodeIndex()
 		return 1, nil
 	}
@@ -278,10 +279,12 @@ func run(ctx context.Context, dry bool) (n int32, err error) {
 
 	errReload := engine.Default().ReloadContext(ctx, c)
 	if errReload != nil {
+		stopNodeLatencySyncWorker()
 		clearRunningNodeIndex()
 		return 0, markStoppedAfterRestoreFailure(context.WithoutCancel(ctx), fmt.Errorf("failed to load new config: %w; see more in log", errReload))
 	}
 	replaceRunningNodeIndex(nodes)
+	startNodeLatencySyncWorker(c.Global.CheckInterval)
 
 	return 1, nil
 }
@@ -336,6 +339,7 @@ func Stop(ctx context.Context, timeout time.Duration) (err error) {
 	if err = engine.Default().Stop(timeout); err != nil {
 		return err
 	}
+	stopNodeLatencySyncWorker()
 	clearRunningNodeIndex()
 	if err = tx.Model(&sys).Updates(map[string]interface{}{
 		"running": false,

@@ -23,9 +23,16 @@ import (
 )
 
 const (
-	latencyProbeConcurrency = 8
-	nodeLatencyCacheTTL     = time.Hour
-	nodeLatencyCacheMaxSize = 4096
+	latencyProbeConcurrency            = 8
+	nodeLatencyCacheTTL                = time.Hour
+	nodeLatencyPersistMinTTL           = 24 * time.Hour
+	nodeLatencyPersistIntervalMultiple = 10
+	nodeLatencyCacheMaxSize            = 4096
+	nodeLatencySyncDefaultInterval     = 30 * time.Second
+	nodeLatencySyncMinInterval         = 10 * time.Second
+	nodeLatencySyncMaxInterval         = 30 * time.Second
+	nodeLatencySyncWarmupInterval      = 2 * time.Second
+	nodeLatencySyncWarmupDuration      = time.Minute
 )
 
 type NodeLatencyResult struct {
@@ -50,6 +57,11 @@ var runtimeNodeIndex = struct {
 }{
 	idsByName: map[string]uint{},
 }
+
+var nodeLatencySyncWorker = struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}{}
 
 func pruneNodeLatencyCacheLocked(now time.Time) {
 	for id, result := range nodeLatencyCache.items {
@@ -110,7 +122,7 @@ func QueryNodeLatencies(ctx context.Context, ids []uint) ([]*NodeLatencyResult, 
 	for _, result := range runtimeResults {
 		mergeNodeLatencyResult(merged, result)
 	}
-	if err := persistNodeLatencyResults(ctx, mapsNodeLatencyValues(runtimeResults)); err != nil {
+	if err := storeAndPersistNodeLatencyResults(ctx, mapsNodeLatencyValues(runtimeResults)); err != nil {
 		return nil, err
 	}
 
@@ -261,7 +273,7 @@ func mergeNodeLatencyResult(results map[uint]*NodeLatencyResult, result *NodeLat
 }
 
 func loadPersistedNodeLatencyResults(ctx context.Context, ids []uint) (map[uint]*NodeLatencyResult, error) {
-	rows, err := db.ListNodeLatencyResults(ctx, ids, time.Now().Add(-nodeLatencyCacheTTL))
+	rows, err := db.ListNodeLatencyResults(ctx, ids, time.Now().Add(-nodeLatencyPersistTTL(ctx)))
 	if err != nil {
 		return nil, err
 	}
@@ -299,6 +311,14 @@ func persistNodeLatencyResults(ctx context.Context, results []*NodeLatencyResult
 	return db.UpsertNodeLatencyResults(ctx, rows)
 }
 
+func storeAndPersistNodeLatencyResults(ctx context.Context, results []*NodeLatencyResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	storeNodeLatencyResults(results)
+	return persistNodeLatencyResults(ctx, results)
+}
+
 func loadRuntimeNodeLatencyResults() (map[uint]*NodeLatencyResult, error) {
 	ctl, err := engine.Default().ControlPlane()
 	if err != nil {
@@ -306,6 +326,9 @@ func loadRuntimeNodeLatencyResults() (map[uint]*NodeLatencyResult, error) {
 			return map[uint]*NodeLatencyResult{}, nil
 		}
 		return nil, err
+	}
+	if ctl == nil {
+		return map[uint]*NodeLatencyResult{}, nil
 	}
 
 	snapshots := ctl.SnapshotNodeLatencies()
@@ -333,8 +356,127 @@ func loadRuntimeNodeLatencyResults() (map[uint]*NodeLatencyResult, error) {
 		})
 	}
 
-	storeNodeLatencyResults(mapsNodeLatencyValues(results))
 	return results, nil
+}
+
+func syncRuntimeNodeLatencyResults(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	runtimeResults, err := loadRuntimeNodeLatencyResults()
+	if err != nil {
+		return 0, err
+	}
+	results := mapsNodeLatencyValues(runtimeResults)
+	if err := storeAndPersistNodeLatencyResults(ctx, results); err != nil {
+		return 0, err
+	}
+	return len(results), nil
+}
+
+func startNodeLatencySyncWorker(checkInterval time.Duration) {
+	interval := nodeLatencySyncInterval(checkInterval)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	nodeLatencySyncWorker.mu.Lock()
+	if nodeLatencySyncWorker.cancel != nil {
+		nodeLatencySyncWorker.cancel()
+	}
+	nodeLatencySyncWorker.cancel = cancel
+	nodeLatencySyncWorker.mu.Unlock()
+
+	go runNodeLatencySyncWorker(ctx, interval)
+}
+
+func stopNodeLatencySyncWorker() {
+	nodeLatencySyncWorker.mu.Lock()
+	defer nodeLatencySyncWorker.mu.Unlock()
+	if nodeLatencySyncWorker.cancel == nil {
+		return
+	}
+	nodeLatencySyncWorker.cancel()
+	nodeLatencySyncWorker.cancel = nil
+}
+
+func runNodeLatencySyncWorker(ctx context.Context, interval time.Duration) {
+	syncOnce := func() {
+		if _, err := syncRuntimeNodeLatencyResults(ctx); err != nil && ctx.Err() == nil {
+			logrus.WithError(err).Debugln("Failed to sync runtime node latency snapshots")
+		}
+	}
+
+	syncOnce()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	warmupTicker := time.NewTicker(nodeLatencySyncWarmupInterval)
+	defer warmupTicker.Stop()
+
+	warmupTimer := time.NewTimer(nodeLatencySyncWarmupDuration)
+	defer warmupTimer.Stop()
+
+	warmup := true
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			syncOnce()
+		case <-warmupTicker.C:
+			if warmup {
+				syncOnce()
+			}
+		case <-warmupTimer.C:
+			warmup = false
+			warmupTicker.Stop()
+		}
+	}
+}
+
+func nodeLatencySyncInterval(checkInterval time.Duration) time.Duration {
+	if checkInterval <= 0 {
+		return nodeLatencySyncDefaultInterval
+	}
+	if checkInterval < nodeLatencySyncMinInterval {
+		return nodeLatencySyncMinInterval
+	}
+	if checkInterval > nodeLatencySyncMaxInterval {
+		return nodeLatencySyncMaxInterval
+	}
+	return checkInterval
+}
+
+func nodeLatencyPersistTTL(ctx context.Context) time.Duration {
+	ttl := nodeLatencyPersistMinTTL
+	interval, err := selectedCheckInterval(ctx)
+	if err != nil || interval <= 0 {
+		return ttl
+	}
+	if interval > time.Duration(1<<63-1)/nodeLatencyPersistIntervalMultiple {
+		return time.Duration(1<<63 - 1)
+	}
+	if candidate := interval * nodeLatencyPersistIntervalMultiple; candidate > ttl {
+		ttl = candidate
+	}
+	return ttl
+}
+
+func selectedCheckInterval(ctx context.Context) (time.Duration, error) {
+	var configModel db.Config
+	q := db.DB(ctx).Where("selected = ?", true).Limit(1).Find(&configModel)
+	if q.Error != nil {
+		return 0, q.Error
+	}
+	if q.RowsAffected == 0 {
+		return 0, gorm.ErrRecordNotFound
+	}
+
+	parsedConfig, err := engine.Default().ParseConfig(&configModel.Global, nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	return parsedConfig.Global.CheckInterval, nil
 }
 
 func replaceRunningNodeIndex(nodes []*node) {
@@ -441,6 +583,9 @@ func testRuntimeNodeLatencyResults(nodes []db.Node) ([]*NodeLatencyResult, map[u
 			return nil, testedIDs, nil
 		}
 		return nil, nil, err
+	}
+	if ctl == nil {
+		return nil, testedIDs, nil
 	}
 
 	nodeIDsByLink := make(map[string][]uint, len(nodes))

@@ -25,6 +25,7 @@ func TestRuntimeLifecycleRejectsStopDuringReload(t *testing.T) {
 	svc := newBlockingReloadService()
 	engine.SetDefault(svc)
 	t.Cleanup(func() {
+		stopNodeLatencySyncWorker()
 		svc.release()
 		engine.SetDefault(nil)
 	})

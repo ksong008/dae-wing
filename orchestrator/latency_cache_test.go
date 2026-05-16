@@ -96,6 +96,27 @@ func TestReplaceRunningNodeIndex(t *testing.T) {
 	}
 }
 
+func TestNodeLatencySyncIntervalClamp(t *testing.T) {
+	tests := []struct {
+		name          string
+		checkInterval time.Duration
+		want          time.Duration
+	}{
+		{name: "unset", checkInterval: 0, want: nodeLatencySyncDefaultInterval},
+		{name: "below minimum", checkInterval: time.Second, want: nodeLatencySyncMinInterval},
+		{name: "within range", checkInterval: 15 * time.Second, want: 15 * time.Second},
+		{name: "above maximum", checkInterval: 10 * time.Minute, want: nodeLatencySyncMaxInterval},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nodeLatencySyncInterval(tt.checkInterval); got != tt.want {
+				t.Fatalf("nodeLatencySyncInterval(%v) = %v, want %v", tt.checkInterval, got, tt.want)
+			}
+		})
+	}
+}
+
 func int32Ptr(value int32) *int32 {
 	return &value
 }
