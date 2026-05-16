@@ -54,20 +54,20 @@ jobs:
       - name: Prepare generated deps
         env:
           GOFLAGS: -mod=mod -modcacherw
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
         run: make deps
       - name: Run focused HTTP API tests
         env:
           GOFLAGS: -mod=mod -modcacherw
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
         run: go test ./cmd ./transport/httpapi
       - name: Run compile sweep
         env:
           GOFLAGS: -mod=mod -modcacherw
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
         run: go test ./cmd ./engine ./orchestrator ./db -run '^$'
 
   unit-full:
@@ -91,14 +91,14 @@ jobs:
       - name: Prepare dae-core build artifacts
         env:
           GOFLAGS: -mod=mod -modcacherw
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
         run: make deps
       - name: Run unit tests
         env:
           GOFLAGS: -mod=mod -modcacherw
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
         run: |
           packages=$(go list ./...)
           failed=""
@@ -135,8 +135,8 @@ jobs:
       - name: Build dae-wing
         env:
           GOFLAGS: -mod=mod -modcacherw
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
           VERSION: test-${{ github.sha }}
           OUTPUT: ./dae-wing-test
         run: |

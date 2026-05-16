@@ -148,6 +148,8 @@ func (s *blockingReloadService) Run(log *logrus.Logger, conf *daeConfig.Config, 
 	return nil
 }
 
+func (s *blockingReloadService) SetLogLevel(level logrus.Level) {}
+
 func (s *blockingReloadService) Reload(conf *daeConfig.Config) error {
 	return s.ReloadContext(context.Background(), conf)
 }
