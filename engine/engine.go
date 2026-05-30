@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"sync"
 	"time"
 
@@ -104,11 +105,17 @@ func (*nativeService) NecessaryOutbounds(routing *daeConfig.Routing) []string {
 }
 
 func (n *nativeService) Run(log *logrus.Logger, conf *daeConfig.Config, externGeoDataDirs []string, disableTimestamp bool, dry bool) error {
-	runtime := daeengine.New(daeengine.Options{})
+	runtime := daeengine.New(daeengine.Options{
+		SuppressInitialEmptyConfigWarnings: isBootstrapEmptyConfig(conf),
+	})
 	n.markRunning(runtime, log, externGeoDataDirs, disableTimestamp, dry)
 	err := runtime.Run(log, conf, externGeoDataDirs, disableTimestamp, dry)
 	n.markStopped(runtime)
 	return err
+}
+
+func isBootstrapEmptyConfig(conf *daeConfig.Config) bool {
+	return conf != nil && reflect.DeepEqual(conf, daeengine.EmptyConfig())
 }
 
 func (n *nativeService) SetLogLevel(level logrus.Level) {
